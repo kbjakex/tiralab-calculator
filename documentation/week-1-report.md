@@ -7,13 +7,12 @@ on Friday, I spent some six hours writing a platform for the pathfinding - namel
 Due to email discussions on Saturday, this ended up not being the project I'd go with, and much of Saturday has been spent discussing and thinking of the 
 topic, amidst other weekend hassle.
 
-I have spent some time staring at the Shunting-Yard algorithm, and that seems to now make sense. This made me increasingly nervous about the scope being too small,
-though, which I brought up in an email.
+I have spent some time staring at the Shunting-Yard algorithm, and that seems to now mostly make sense. This made me increasingly nervous about the scope being too small, though, which I brought up in an email.
 
-No code has been produced for the new topic yet, as it was chosen quite late.
+I laid down a fair amount of groundwork: a simple REPL interface (too barebones still), defined the abstract syntax tree, and got started on implementing the algorithm. The project does not work yet, however.
 
 All in all, I would estimate that a total of 9 hours was sunk into this.
 
 ### Next steps
 
-My next step will be writing the most basic REPL (read-eval-print-loop) interface and implementing the Shunting-Yard algorithm.
+The implementation of the Shunting-Yard algorithm is by no means done yet, work on that will continue. My understanding of the algorithm is not good enough either, so I'll be spending more time on that.
