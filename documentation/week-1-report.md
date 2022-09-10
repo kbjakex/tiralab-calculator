@@ -3,7 +3,7 @@
 I have had a limited amount of time to work on this, and could only start on Friday. Up until then, I had decided to implement the 
 [L1 pathfinding](https://mikolalysenko.github.io/l1-path-finder/www/) algorithm, port it to 3D and compare performance with Jump-Point Search.
 
-on Friday, I spent some six hours writing a platform for the pathfinding - namely, a representation of the world, meshing and rendering.
+On Friday, I spent some six hours writing a platform for the pathfinding - namely, a representation of the world, meshing and rendering.
 Due to email discussions on Saturday, this ended up not being the project I'd go with, and much of Saturday has been spent discussing and thinking of the 
 topic, amidst other weekend hassle.
 
