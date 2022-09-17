@@ -3,7 +3,7 @@
 This week I have managed my time poorly, and got much less done than anticipated. What I did do is:
 - finish the initial implementation of the shunting yard algorithm
 - write a handful of tests for it
-- and do a bit of housekeeping in the codebase, although very minor.
+- and do a bit of housekeeping in the codebase (such as commenting), although somewhat minor.
 
 Additionally, I spent an annoying amount of time setting up test coverage. This will need more investigation, but the problem is clear: the Rust compiler
 (rustc) needs to be "nightly" (which I have), but since the LLVM version used in rustc needs to match the LLVM I process the generated coverage reports
@@ -32,3 +32,5 @@ how much this would win in performance in practice, so I have decided to leave i
 
 Next is what I wanted to have done by now, and will have by Sunday (tomorrow) evening instead, which is printing the evaluation result to the console.
 I will also get the code coverage working, and after that is time for functions. By the next deadline, I wish to have the ability to add and call functions in and tested.
+
+Time spent, not including the hours spent mostly idling, would be roughly 6. Out of 16.6, I know this is low.
