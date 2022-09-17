@@ -11,29 +11,10 @@ struct Variable {
     pub value: Ast
 }
 
-struct SymbolTable {
+/// Contains all the state in the calculator; most importantly,
+/// all functions and variables, and a mapping to them from their names.
+#[derive(Default)]
+pub struct CalculatorState {
     functions: HashMap<String, Function>,
     variables: HashMap<String, f64>
 }
-
-impl SymbolTable {
-    pub fn new() -> Self {
-        Self {
-            functions: HashMap::default(),
-            variables: HashMap::default(),
-        }
-    }
-}
-
-pub struct CalculatorState {
-    sym_table: SymbolTable
-}
-
-impl CalculatorState {
-    pub fn new() -> Self {
-        Self {
-            sym_table: SymbolTable::new()
-        }
-    }
-}
-

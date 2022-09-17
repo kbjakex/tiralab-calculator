@@ -9,7 +9,7 @@ use state::CalculatorState;
 use anyhow::Result;
 
 fn main() {
-    let mut state = CalculatorState::new();
+    let mut state = CalculatorState::default();
 
     // A simple REPL (read-eval-print-loop) interface
     for line in std::io::stdin().lock().lines() {
@@ -24,10 +24,17 @@ fn main() {
     }
 }
 
+/// Process a line of input from the user, resulting either a direct evaluation
+/// of an expression printed in the console, or a variable or a function added
+/// to the calculator state.
+/// ## Errors
+/// If the input string was not syntactically valid, an error describing the
+/// problem is returned.
 fn process_input(state: &mut CalculatorState, input: String) -> Result<()> {
-    let postfix = parser::infix_to_ast(&input)?;
+    let postfix = parser::infix_to_postfix_shunting_yard(&input)?;
+    let syntax_tree = parser::postfix_to_ast(postfix)?;
 
-    println!("{:?}", postfix);
+    // TBD
 
     Ok(())
 }

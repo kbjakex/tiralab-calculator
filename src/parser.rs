@@ -1,4 +1,4 @@
-use anyhow::{Result, bail, Error};
+use anyhow::{Result, bail};
 use bstr::BStr;
 
 use crate::ast::{Ast, BinaryOperator, AstNode};
@@ -15,11 +15,9 @@ pub enum Token<'a> {
     BinaryOperator { operator: BinaryOperator },
 }
 
-pub fn infix_to_ast<'a>(infix_str: &'a str) -> Result<Ast> {
-    let postfix = infix_to_postfix_shunting_yard(infix_str)?;
-
+pub fn postfix_to_ast<'a>(tokens: Vec<Token<'a>>) -> Result<Ast> {
     let mut ast = Ast::new();
-    for token in postfix.iter() {
+    for token in tokens.iter() {
         match token {
             &Token::Value { value: Value::Constant { value } } => ast.nodes.push(AstNode::Constant { value }),
             &Token::Value { value: Value::Variable { name }} => ast.nodes.push(AstNode::VariableReference { name: name.into() }),
@@ -67,7 +65,7 @@ pub fn infix_to_postfix_shunting_yard<'a>(infix_str: &'a str) -> Result<Vec<Toke
                         || (!operator.left_associative() && precedence < top_precedence) {
                         output.push(Token::BinaryOperator{ operator: *top_of_stack });
                         operators.pop();
-                    } {
+                    } else {
                         break;
                     }
                 }
@@ -199,10 +197,26 @@ impl<'a> Iterator for TokenIterator<'a> {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    use crate::{parser::{ParserToken, Token, Value}, ast::BinaryOperator};
+    use crate::{parser::{Token, Value}, ast::BinaryOperator};
 
     use super::infix_to_postfix_shunting_yard;
+    
+    // A macro to make building expected solutions not enormously verbose. Macros are unfortunately
+    // fairly unreadable, but you can probably mostly infer what it does from the usage in below tests.
+    macro_rules! tokens {
+        (+) => {Token::BinaryOperator { operator: BinaryOperator::Add }};
+        (-) => {Token::BinaryOperator { operator: BinaryOperator::Subtract }};
+        (*) => {Token::BinaryOperator { operator: BinaryOperator::Multiply }};
+        (/) => {Token::BinaryOperator { operator: BinaryOperator::Divide }};
+        ($lit:literal) => {Token::Value { value: Value::Constant{ value: $lit as f64 } }};
+        // Loop over space-separated input tokens, parse them with the token! macro, and build
+        // a vector out of them. 
+        ($($tok:tt)+) => {
+            vec![$(tokens!($tok),)*]
+        }
+    }
 
     #[test]
     fn test_reports_mismatched_parentheses() {
@@ -232,22 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn test_some_expressions() {
-        // Macros to make building expected solutions not enormously verbose. Macros are unfortunately
-        // fairly unreadable, but you can probably mostly infer what it does from the usage below.
-        macro_rules! tokens {
-            (+) => {Token::BinaryOperator { operator: BinaryOperator::Add }};
-            (-) => {Token::BinaryOperator { operator: BinaryOperator::Subtract }};
-            (*) => {Token::BinaryOperator { operator: BinaryOperator::Multiply }};
-            (/) => {Token::BinaryOperator { operator: BinaryOperator::Divide }};
-            ($lit:literal) => {Token::Value { value: Value::Constant{ value: $lit as f64 } }};
-            // Loop over space-separated input tokens, parse them with the token! macro, and build
-            // a vector out of them. 
-            ($($tok:tt)+) => {
-                vec![$(tokens!($tok),)*]
-            }
-        }
-
+    fn test_valid_expressions() {
         assert_eq!(tokens![5 5 +], infix_to_postfix_shunting_yard("5. + 5.").unwrap());
         assert_eq!(tokens![5 5 + 3 3 + *], infix_to_postfix_shunting_yard("(5 + 5) * (3 + 3)").unwrap());
         assert_eq!(tokens![5 5 + 3 * 3 +], infix_to_postfix_shunting_yard("(5 + 5) * 3 + 3").unwrap());
