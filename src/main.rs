@@ -32,7 +32,7 @@ fn main() {
 /// problem is returned.
 fn process_input(state: &mut CalculatorState, input: String) -> Result<()> {
     let postfix = parser::infix_to_postfix_shunting_yard(&input)?;
-    let syntax_tree = parser::postfix_to_ast(postfix)?;
+    let syntax_tree = parser::postfix_to_ast(postfix);
 
     // TBD
 

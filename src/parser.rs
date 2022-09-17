@@ -15,7 +15,9 @@ pub enum Token<'a> {
     BinaryOperator { operator: BinaryOperator },
 }
 
-pub fn postfix_to_ast<'a>(tokens: Vec<Token<'a>>) -> Result<Ast> {
+/// Takes a sequence of nodes in postfix order (produced by `infix_to_postfix_shunting_yard`)
+/// and builds an abstract syntax tree in. This runs in O(n) time and space.
+pub fn postfix_to_ast<'a>(tokens: Vec<Token<'a>>) -> Ast {
     let mut ast = Ast::new();
     for token in tokens.iter() {
         match token {
@@ -29,7 +31,7 @@ pub fn postfix_to_ast<'a>(tokens: Vec<Token<'a>>) -> Result<Ast> {
         }
     }
     
-    Ok(ast)
+    ast
 }
 
 /// Converts an expression from infix form (`1 + 2`) to postfix form (`1 2 +`) using the
@@ -84,6 +86,8 @@ pub fn infix_to_postfix_shunting_yard<'a>(infix_str: &'a str) -> Result<Vec<Toke
     Ok(output)
 }
 
+/// Last step in the shunting-yard algorithm: pop nodes from operator stack into the output
+/// until a left paren ('(') is found. The function does not pop the left paren.
 fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<Token<'a>>) {
     while let Some(top) = operators.last() {
         match top {
@@ -97,6 +101,7 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
     }
 }
 
+/// Represents a token internal to the parser.
 #[derive(Debug)]
 enum ParserToken<'a> {
     Number { value: f64 },
@@ -112,6 +117,7 @@ struct TokenIterator<'a> {
 }
 
 impl<'a> TokenIterator<'a> {
+    /// Creates a new iterator over the tokens in the source string.
     pub fn of(source: &'a str) -> Self {
         Self {
             source: source.into(), // Guaranteed to be free and infallible
@@ -250,7 +256,7 @@ mod tests {
         assert_eq!(tokens![5 5 +], infix_to_postfix_shunting_yard("5. + 5.").unwrap());
         assert_eq!(tokens![5 5 + 3 3 + *], infix_to_postfix_shunting_yard("(5 + 5) * (3 + 3)").unwrap());
         assert_eq!(tokens![5 5 + 3 * 3 +], infix_to_postfix_shunting_yard("(5 + 5) * 3 + 3").unwrap());
-        assert_eq!(tokens![5 5 3 * 3 + +], infix_to_postfix_shunting_yard("5 + 5 * 3 + 3").unwrap());
+        assert_eq!(tokens![5 5 3 * + 3 +], infix_to_postfix_shunting_yard("5 + 5 * 3 + 3").unwrap());
         assert_eq!(tokens![5 5 3 3 + * +], infix_to_postfix_shunting_yard("5 + 5 * (3 + 3)").unwrap());
     }
 }
