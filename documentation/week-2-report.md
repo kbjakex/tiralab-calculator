@@ -30,6 +30,8 @@ it seems fairly trivial to modify the algorithm to evaluate directly.
 This would effectively require me to duplicate the algorithm though, as the modifications differ, and it doesn't help the time complexity, only performance. It is also unclear
 how much this would win in performance in practice, so I have decided to leave it as is for now.
 
+About code style checks: I'm using `cargo clippy` as my linter. It does not produce a webview of the issues, but rather an in-console report which I used to clean up some of the warnings. My IDE also invokes clippy and displays its warnings directly in the editor, and I'm using the official code formatter, so my code should be fairly good at all times.
+
 Next is what I wanted to have done by now, and will have by Sunday (tomorrow) evening instead, which is printing the evaluation result to the console.
 I will also get the code coverage working, and after that is time for functions. By the next deadline, I wish to have the ability to add and call functions in and tested.
 
