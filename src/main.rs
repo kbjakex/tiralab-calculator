@@ -25,7 +25,9 @@ fn main() {
 }
 
 fn process_input(state: &mut CalculatorState, input: String) -> Result<()> {
-    let postfix = parser::infix_to_postfix_shunting_yard(&input)?;
+    let postfix = parser::infix_to_ast(&input)?;
+
+    println!("{:?}", postfix);
 
     Ok(())
 }

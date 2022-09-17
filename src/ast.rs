@@ -2,7 +2,7 @@ use flexstr::LocalStr;
 
 
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
     Add,
     Subtract,
@@ -28,11 +28,12 @@ impl BinaryOperator {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
     Negate
 }
 
+#[derive(Debug)]
 pub enum AstNode {
     Constant {
         value: f64
@@ -43,11 +44,13 @@ pub enum AstNode {
     VariableReference {
         name: LocalStr,
     },
-    UnaryOperation { // Represents `OP(node)`, for example `-f(x)`
+    /// Represents `OP(node)`, for example `-f(x)`.
+    UnaryOperation {
         node_index: u32,
         operation: UnaryOperator
     },
-    BinaryOperation { // Represents `(lhs) OP (rhs)`, for example `1 + f(x)`
+    /// Represents `(lhs) OP (rhs)`, for example `1 + f(x)`.
+    BinaryOperation {
         lhs_node_index: u32,
         rhs_node_index: u32,
         operation: BinaryOperator
@@ -56,6 +59,7 @@ pub enum AstNode {
 
 /// Represents an abstract syntax tree
 /// See: https://en.wikipedia.org/wiki/Abstract_syntax_tree
+#[derive(Debug)]
 pub struct Ast {
     // Root node is at index 0.
     pub nodes: Vec<AstNode>
