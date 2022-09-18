@@ -6,8 +6,8 @@ use flexstr::LocalStr;
 pub enum BinaryOperator {
     Add,
     Subtract,
+    Multiply,
     Divide,
-    Multiply
 }
 
 impl BinaryOperator {
@@ -20,9 +20,20 @@ impl BinaryOperator {
         }
     }
 
-    pub fn left_associative(self) -> bool {
+    pub const fn left_associative(self) -> bool {
         match self {
             _ => true
+        }
+    }
+
+    /// Compute `lhs OP rhs`, where OP is a binary operator (self),
+    /// and will always return a f64.
+    pub fn apply(self, lhs: f64, rhs: f64) -> f64  {
+        match self {
+            BinaryOperator::Add => lhs + rhs,
+            BinaryOperator::Subtract => lhs - rhs,
+            BinaryOperator::Multiply => lhs * rhs,
+            BinaryOperator::Divide => lhs / rhs,
         }
     }
 }
