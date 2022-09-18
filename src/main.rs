@@ -1,4 +1,3 @@
-#![feature(let_else)]
 #![warn(clippy::all, clippy::pedantic, clippy::cargo)]
 
 pub mod ast;
@@ -90,23 +89,21 @@ fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<f64> {
                 head += 1;
             }
             Token::Variable { name } => {
-                let Some(&resolved) = state.variables.get(name) else {
+                if let Some(&resolved) = state.variables.get(name) {
+                    tokens[head] = Token::Number(resolved);
+                    head += 1;
+                } else {
                     bail!("Variable '{name}' not found");
                 };
-
-                tokens[head] = Token::Number(resolved);
-                head += 1;
             }
             Token::BinaryOperator(operator) => {
-                let Some(&Token::Number(lhs)) = tokens.get(head-2) else {
-                    unreachable!();
-                };
-                let Some(&Token::Number(rhs)) = tokens.get(head-1) else {
-                    unreachable!();
-                };
-
-                tokens[head - 2] = Token::Number(operator.apply(lhs, rhs));
-                head -= 1;
+                match (&tokens[head-2], &tokens[head-1]) {
+                    (&Token::Number(lhs), &Token::Number(rhs)) => {
+                        tokens[head - 2] = Token::Number(operator.apply(lhs, rhs));
+                        head -= 1;
+                    },
+                    _ => unreachable!()
+                }
             }
         }
     }
@@ -115,6 +112,6 @@ fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<f64> {
 
     match tokens[0] {
         Token::Number(value) => Ok(value),
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
