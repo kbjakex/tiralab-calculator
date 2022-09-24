@@ -31,6 +31,8 @@ if there are more parameters. I'd rather not keep spending my weekends on this, 
 
 Also, code coverage is admittedly currently poor. I didn't leave myself enough time to add tests for all the changes.
 
+Time spent this week: around 10 hours.
+
 ### Next up
 
 Functions will work by the next deadline, and code coverage will be brought back up. 
@@ -39,3 +41,5 @@ That will conclude all main functionality for the project.
 
 After that, I expect I'll get the low-hanging fruits in optimization, but I think it's fairly clear by now I'll have time to at least add 
 multi-statement functions, so looking forward to that.
+
+
