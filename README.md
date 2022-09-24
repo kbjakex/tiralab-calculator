@@ -4,7 +4,10 @@ A scientific calculator University project
 
 ### Project status
 
-Project is at an early stage and does not have meaningful functionality. Main functionality should hopefully be done by the next Saturday (24/9).
+The project is at an early stage. Currently, the program lets you enter basic expressions (using `+-*/`) and tries to evaluate them, and does validate the input fairly carefully. Variables are also fully functional. Missing from the main goal, feature-wise, are mostly
+* the rest of the operators 
+* the ability to declare/call functions (mostly done code-wise)
+* built-in functions and constants.
 
 ### Rust version
 
