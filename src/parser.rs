@@ -1,3 +1,5 @@
+use std::iter::Peekable;
+
 use anyhow::{anyhow, bail, Result};
 use bstr::BStr;
 
@@ -7,6 +9,7 @@ use crate::ast::BinaryOperator;
 pub enum Token<'a> {
     Number(f64),
     Variable { name: &'a str },
+    Function { name: &'a str, parameter_count: u32 },
     BinaryOperator(BinaryOperator),
 }
 
@@ -21,7 +24,15 @@ pub enum Token<'a> {
 /// # Errors
 /// In the case of a syntax error in the input, an error describing the syntax error
 /// is returned.
-pub fn infix_to_postfix_shunting_yard(infix_str: &str) -> Result<Vec<Token>> {
+pub fn infix_to_postfix_shunting_yard<'a>(tokens: impl Into<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
+    let mut iterator = tokens.into().peekable();
+    shunting_yard(&mut iterator)
+}
+
+/// The actual implementation. Separated for a nicer interface.
+fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
+    use ParserToken::{BinaryOperator, LeftParen, RightParen, Number, Variable, Function, Delimiter};
+
     // Runtime invariant: `operators` does *not* contain numbers, variables or right parens.
     let mut output = Vec::new();
     let mut operators = Vec::new();
@@ -32,8 +43,7 @@ pub fn infix_to_postfix_shunting_yard(infix_str: &str) -> Result<Vec<Token>> {
     // and so on. This bit of state is enough to verify this.
     let mut expecting_operator = false;
 
-    use ParserToken::*;
-    for token in TokenIterator::of(infix_str) {
+    while let Some(token) = tokens.next() {
         match token? {
             Number(..) | Variable { .. } if expecting_operator => {
                 bail!("Found two values in a row (missing an operator?)");
@@ -45,6 +55,29 @@ pub fn infix_to_postfix_shunting_yard(infix_str: &str) -> Result<Vec<Token>> {
             }
             Variable { name } => {
                 output.push(Token::Variable { name });
+                expecting_operator = true;
+            }
+            Function { name } => {
+                let mut parameter_count = 0;
+                loop {
+                    println!("Param 1");
+                    // Parse function parameters as a separate invocation. Unoptimal, subject to change,
+                    // but easy and safe
+                    output.append(&mut shunting_yard(tokens)?);
+                    parameter_count += 1;
+
+                    /* if let Some(next) = tokens.next() {
+                        match next? {
+                            RightParen => break, 
+                            Delimiter => continue,
+                            other => bail!("Unexpected symbol after function parameter: {other:?}")
+                        }
+                    } else {
+                        bail!("Missing closing )");
+                    } */
+                }
+
+                output.push(Token::Function { name, parameter_count });
                 expecting_operator = true;
             }
             LeftParen => operators.push(LeftParen),
@@ -79,6 +112,7 @@ pub fn infix_to_postfix_shunting_yard(infix_str: &str) -> Result<Vec<Token>> {
 
                 operators.push(BinaryOperator(operator));
             }
+            Delimiter => break,
         }
     }
 
@@ -102,8 +136,10 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
         match *top {
             ParserToken::Number(value) => output.push(Token::Number(value)),
             ParserToken::Variable { name } => output.push(Token::Variable { name }),
+            ParserToken::Function { name } => output.push(Token::Function { name, parameter_count: 0 }),
             ParserToken::BinaryOperator(operator) => output.push(Token::BinaryOperator(operator)),
             ParserToken::RightParen => unreachable!("operators never contains right parens"),
+            ParserToken::Delimiter => unreachable!("operators never contains delimiters"),
             ParserToken::LeftParen => return,
         }
         operators.pop();
@@ -112,15 +148,17 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
 
 /// Represents a token internal to the parser.
 #[derive(Debug)]
-enum ParserToken<'a> {
+pub enum ParserToken<'a> {
     Number(f64),
     Variable { name: &'a str },
+    Function { name: &'a str },
+    Delimiter,
     BinaryOperator(BinaryOperator),
     LeftParen,
     RightParen,
 }
 
-struct TokenIterator<'a> {
+pub struct TokenIterator<'a> {
     source: &'a BStr,
     index: usize, // Current position in `source`
     last_was_number: bool,
@@ -205,10 +243,16 @@ impl<'a> TokenIterator<'a> {
             b'-' => ParserToken::BinaryOperator(BinaryOperator::Subtract),
             b'*' => ParserToken::BinaryOperator(BinaryOperator::Multiply),
             b'/' => ParserToken::BinaryOperator(BinaryOperator::Divide),
+            b',' => ParserToken::Delimiter,
 
             c if c.is_ascii_digit() => {
                 self.last_was_number = true;
                 ParserToken::Number(self.read_number()?)
+            }
+            c if c.is_ascii_alphabetic() && self.source.get(self.index + 1) == Some(&b'(') => {
+                let result = ParserToken::Function { name: self.read_identifier() };
+                self.index += 1;
+                result
             }
             c if c.is_ascii_alphabetic() => ParserToken::Variable {
                 name: self.read_identifier(),
@@ -235,6 +279,12 @@ impl<'a> Iterator for TokenIterator<'a> {
         }
 
         Some(self.read_token())
+    }
+}
+
+impl<'a> From<&'a str> for TokenIterator<'a> {
+    fn from(source: &'a str) -> Self {
+        Self::of(source)
     }
 }
 

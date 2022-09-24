@@ -70,16 +70,8 @@ pub enum AstNode {
 
 /// Represents an abstract syntax tree
 /// See: https://en.wikipedia.org/wiki/Abstract_syntax_tree
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Ast {
     // Root node is at index 0.
     pub nodes: Vec<AstNode>
-}
-
-impl Ast {
-    pub fn new() -> Self {
-        Self {
-            nodes: Vec::new()
-        }
-    }
 }
