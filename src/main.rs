@@ -62,8 +62,6 @@ fn process_input(state: &mut CalculatorState, input: String) -> Result<()> {
     // Neither a variable nor a function, so simply evaluate
     let mut postfix = parser::infix_to_postfix(input.as_str())?;
 
-    println!("TOKENS: {postfix:?}");
-
     println!("{}", eval_postfix(&mut postfix, state)?);
 
     Ok(())
@@ -202,8 +200,6 @@ fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<f64> {
             },
         }
     }
-
-    println!("Final stack: {tokens:?}");
 
     assert_eq!(1, head);
 

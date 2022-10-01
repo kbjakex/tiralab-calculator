@@ -35,7 +35,7 @@ impl Function {
         name: Box<str>,
         expression: &str,
         parameter_names: &[&str],
-        state: &CalculatorState
+        state: &CalculatorState,
     ) -> anyhow::Result<Self> {
         let tokens = parser::infix_to_postfix(expression)?;
         Self::from_name_and_tokens(name, &tokens, parameter_names, state)
@@ -79,7 +79,11 @@ impl Function {
             };
         }
 
-        Ok(Function { name, expression: resolved, parameter_count: parameter_names.len() as _ })
+        Ok(Function {
+            name,
+            expression: resolved,
+            parameter_count: parameter_names.len() as _,
+        })
     }
 
     pub fn evaluate(&self, state: &CalculatorState, parameters: &[f64]) -> anyhow::Result<f64> {
@@ -106,17 +110,14 @@ impl Function {
                     if let Some(function) = state.functions.get(name.deref()) {
                         let parameters = &stack[stack.len() - parameter_count..];
                         let result = function.evaluate(state, parameters)?;
-                        println!("{name}{parameters:?} = {result}");
 
                         stack.drain(stack.len() - parameter_count..);
                         stack.push(result);
-
                     }
                 }
                 Token::BinaryOperator(operator) => {
                     if let (Some(rhs), Some(lhs)) = (stack.pop(), stack.pop()) {
                         stack.push(operator.apply(lhs, rhs));
-                        println!("{operator:?}({lhs}, {rhs}) = {}", stack.last().unwrap());
                     } else {
                         unreachable!();
                     }
@@ -125,5 +126,76 @@ impl Function {
         }
 
         Ok(stack.pop().unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CalculatorState, Function};
+
+    fn eval(
+        state: &CalculatorState,
+        expression: &str,
+        params: &[&str],
+        param_values: &[f64],
+    ) -> f64 {
+        Function::from_name_and_expression("foo".into(), expression, params, &state)
+            .unwrap()
+            .evaluate(&state, param_values)
+            .unwrap()
+    }
+
+    #[test]
+    fn test_simple_evaluates_correctly() {
+        let state = CalculatorState::default();
+        assert_eq!(1.0 / 6.0, eval(&state, "1.0 / 6.0", &[], &[]));
+        assert_eq!(2.5, eval(&state, "(x + 3) / 2", &["x"], &[2.0]));
+        assert_eq!(-1.0, eval(&state, "x - y", &["x", "y"], &[1.0, 2.0]));
+        assert_eq!(
+            -3.0,
+            eval(&state, "(x - y) / (x + y)", &["x", "y"], &[1.0, -2.0])
+        );
+    }
+
+    #[test]
+    fn test_variable_references_work() {
+        let mut state = CalculatorState::default();
+        state.variables.insert("mypi".into(), std::f64::consts::PI);
+        state.variables.insert("foo".into(), -100.0);
+
+        assert_eq!(
+            std::f64::consts::PI / -100.0,
+            eval(&state, "mypi / foo", &[], &[])
+        );
+        assert_eq!(0.0, eval(&state, "foo + x", &["x"], &[100.0]));
+    }
+
+    #[test]
+    fn test_unknown_variables_error() {
+        let state = CalculatorState::default();
+
+        let result = Function::from_name_and_expression("foo".into(), "x", &[], &state);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_function_calls_work() {
+        let mut state = CalculatorState::default();
+        let test_fn = Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state).unwrap();
+        state.functions.insert("f".into(), test_fn);
+
+        assert_eq!(3.0 * 5.0 / 7.0, eval(&state, "f(3, 5, 7)", &[], &[]));
+        assert_eq!(3.0 * 5.0 / 7.0, eval(&state, "f(x, y, z)", &["x", "y", "z"], &[3.0, 5.0, 7.0]));
+    }
+
+    #[test]
+    fn test_parameter_count_mismatch_errors() {
+        let state = CalculatorState::default();
+        let test_fn = Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state).unwrap();
+        
+        assert!(test_fn.evaluate(&state, &[]).is_err());
+        assert!(test_fn.evaluate(&state, &[1.0]).is_err());
+        assert!(test_fn.evaluate(&state, &[1.0, 2.0]).is_err());
+        assert!(test_fn.evaluate(&state, &[1.0, 2.0, 3.0]).is_ok());
     }
 }

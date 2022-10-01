@@ -38,16 +38,9 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
     let mut operators = Vec::new();
     let mut parameter_counts = Vec::new();
 
-    // Shunting yard in itself accepts both postfix and infix, but in this case,
-    // I want only infix to be accepted. In infix, after each value or right paren,
-    // there must necessarily be an operator, after which is again a value of left paren,
-    // and so on. This bit of state is enough to verify this.
-    let mut expecting_operator = false;
-
     let mut last_token = None;
     while let Some(token) = tokens.next() {
         let token = token?; // Check for parsing errors
-        println!("{token:?}");
 
         validate_syntax(last_token, token)?;
 
@@ -119,9 +112,6 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
     if matches!(last_token, Some(ParserToken::BinaryOperator(..))) {
         bail!("Trailing operator");
     }
-    /*     if !expecting_operator {
-        bail!("Expression can't end with an operator");
-    } */
 
     pop_until_lparen(&mut operators, &mut output);
     // No tokens should remain
@@ -190,7 +180,6 @@ fn validate_syntax(last: Option<ParserToken>, token: ParserToken) -> anyhow::Res
                 bail!("Found empty parentheses `()`");
             }
         }
-        _ => {}
     }
 
     Ok(())
@@ -419,6 +408,13 @@ mod tests {
             tokens![x x * y y * -],
             infix_to_postfix("x*x - y*y").unwrap()
         );
+    }
+
+    #[test]
+    fn test_function_calls_work() {
+        assert!(infix_to_postfix("foo(a)").is_ok());
+        assert!(infix_to_postfix("bar ( a , b )").is_ok());
+        assert!(infix_to_postfix("f(a,b,c)").is_ok());
     }
 
     #[test]
