@@ -6,12 +6,12 @@ pub mod state;
 
 use std::io::{self, BufRead, Write};
 
-use parser::{ParserToken, TokenIterator, infix_to_postfix_shunting_yard};
+use parser::{infix_to_postfix, ParserToken, TokenIterator};
 
 use anyhow::{bail, Result};
 use state::CalculatorState;
 
-use crate::parser::Token;
+use crate::{parser::Token, state::Function};
 
 fn print_input_expected_marker() {
     print!("> ");
@@ -60,7 +60,9 @@ fn process_input(state: &mut CalculatorState, input: String) -> Result<()> {
     }
 
     // Neither a variable nor a function, so simply evaluate
-    let mut postfix = parser::infix_to_postfix_shunting_yard(input.as_str())?;
+    let mut postfix = parser::infix_to_postfix(input.as_str())?;
+
+    println!("TOKENS: {postfix:?}");
 
     println!("{}", eval_postfix(&mut postfix, state)?);
 
@@ -75,7 +77,7 @@ fn process_variable_or_function(
     rest: &str,
 ) -> Result<()> {
     let mut tokens = TokenIterator::of(start);
-    
+
     // 1. Variable and function should both begin with what is a valid variable name
     let identifier_token = tokens.next().unwrap()?;
 
@@ -84,9 +86,10 @@ fn process_variable_or_function(
             if tokens.next().is_some() {
                 bail!("Invalid syntax (interpreted as variable declaration, which should be `name = value`)");
             }
-            let mut value_tokens = infix_to_postfix_shunting_yard(rest)?;
+            let mut value_tokens = infix_to_postfix(rest)?;
             let value = eval_postfix(&mut value_tokens, state)?;
-            state.variables
+            state
+                .variables
                 .entry(name.to_owned())
                 .and_modify(|old_value| {
                     *old_value = value;
@@ -96,8 +99,51 @@ fn process_variable_or_function(
                     println!("{name} = {value}");
                     value
                 });
-        },
-        _ => { bail!("Invalid syntax"); }
+        }
+        ParserToken::Function { name } => {
+            assert!(matches!(tokens.next().unwrap()?, ParserToken::LeftParen));
+            let mut param_names = Vec::new();
+            let mut expecting_identifier = true;
+            loop {
+                if let Some(next) = tokens.next() {
+                    let next = next?;
+
+                    match next {
+                        ParserToken::Variable { name } => param_names.push(name),
+                        ParserToken::Delimiter => {}
+                        ParserToken::RightParen => break,
+                        other => bail!("'{other:?}' not allowed in function declaration!"),
+                    }
+
+                    let is_identifier = matches!(next, ParserToken::Variable { .. });
+                    if expecting_identifier && !is_identifier {
+                        bail!("Expected parameter name, got '{next:?}");
+                    }
+                    if !expecting_identifier && is_identifier {
+                        bail!("Expected `,` or `)`, got identifier '{next:?}'");
+                    }
+                    expecting_identifier = !is_identifier;
+                } else {
+                    bail!("Missing closing ) for function declaration");
+                }
+            }
+
+            if tokens.next().is_some() {
+                bail!("Found extra symbols after function name");
+            }
+
+            let function =
+                Function::from_name_and_expression(name.into(), rest, &param_names, state)?;
+
+            if state.functions.insert(name.to_owned(), function).is_some() {
+                println!("Updated function '{name}'");
+            } else {
+                println!("Defined function '{name}'!");
+            }
+        }
+        _ => {
+            bail!("Invalid syntax");
+        }
     }
 
     Ok(())
@@ -125,32 +171,39 @@ fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<f64> {
                     bail!("Variable '{name}' not found");
                 };
             }
-            Token::Function { name, parameter_count } => {
+            Token::Function {
+                name,
+                parameter_count,
+            } => {
                 if let Some(function) = state.functions.get(name) {
                     let mut parameters = [0f64; 8];
                     for i in 0..parameter_count as usize {
-                        parameters[i] = match tokens[head - i - 1] {
+                        parameters[parameter_count as usize - 1 - i] = match tokens[head - i - 1] {
                             Token::Number(value) => value,
-                            _ => unreachable!()
+                            _ => unreachable!(),
                         }
                     }
 
+                    head -= parameter_count as usize;
                     tokens[head] = Token::Number(
-                        function.evaluate(state, &parameters[..parameter_count as usize])?
+                        function.evaluate(state, &parameters[..parameter_count as usize])?,
                     );
+                    head += 1;
+                } else {
+                    bail!("Function '{name}' not found");
                 }
             }
-            Token::BinaryOperator(operator) => {
-                match (&tokens[head-2], &tokens[head-1]) {
-                    (&Token::Number(lhs), &Token::Number(rhs)) => {
-                        tokens[head - 2] = Token::Number(operator.apply(lhs, rhs));
-                        head -= 1;
-                    },
-                    _ => unreachable!()
+            Token::BinaryOperator(operator) => match (&tokens[head - 2], &tokens[head - 1]) {
+                (&Token::Number(lhs), &Token::Number(rhs)) => {
+                    tokens[head - 2] = Token::Number(operator.apply(lhs, rhs));
+                    head -= 1;
                 }
-            }
+                _ => unreachable!(),
+            },
         }
     }
+
+    println!("Final stack: {tokens:?}");
 
     assert_eq!(1, head);
 

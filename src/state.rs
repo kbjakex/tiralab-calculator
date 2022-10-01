@@ -11,6 +11,7 @@ pub struct CalculatorState {
     pub functions: HashMap<String, Function>,
 }
 
+#[derive(Debug)]
 enum Token {
     Constant(f64),
     BinaryOperator(BinaryOperator),
@@ -30,15 +31,25 @@ pub struct Function {
 }
 
 impl Function {
+    pub fn from_name_and_expression(
+        name: Box<str>,
+        expression: &str,
+        parameter_names: &[&str],
+        state: &CalculatorState
+    ) -> anyhow::Result<Self> {
+        let tokens = parser::infix_to_postfix(expression)?;
+        Self::from_name_and_tokens(name, &tokens, parameter_names, state)
+    }
+
     pub fn from_name_and_tokens(
         name: Box<str>,
-        tokens: Vec<parser::Token>,
-        parameter_names: &Vec<&str>,
+        tokens: &[parser::Token],
+        parameter_names: &[&str],
         state: &CalculatorState,
     ) -> anyhow::Result<Self> {
         let mut resolved = Vec::new();
         for token in tokens {
-            match token {
+            match *token {
                 parser::Token::Number(value) => resolved.push(Token::Constant(value)),
                 parser::Token::Variable { name } => {
                     if let Some(&value) = state.variables.get(name) {
@@ -47,6 +58,7 @@ impl Function {
                         .iter()
                         .position(|param_name| *param_name == name)
                     {
+                        // reverse the index, because with shunting yard, the parameters end up being in the wrong order
                         resolved.push(Token::Parameter { index });
                     } else {
                         bail!("Unknown variable '{name}'");
@@ -90,14 +102,21 @@ impl Function {
                     name,
                     parameter_count,
                 } => {
+                    let parameter_count = *parameter_count as usize;
                     if let Some(function) = state.functions.get(name.deref()) {
-                        let parameters = &stack[stack.len() - *parameter_count as usize..];
-                        stack.push(function.evaluate(state, parameters)?);
+                        let parameters = &stack[stack.len() - parameter_count..];
+                        let result = function.evaluate(state, parameters)?;
+                        println!("{name}{parameters:?} = {result}");
+
+                        stack.drain(stack.len() - parameter_count..);
+                        stack.push(result);
+
                     }
                 }
                 Token::BinaryOperator(operator) => {
                     if let (Some(rhs), Some(lhs)) = (stack.pop(), stack.pop()) {
                         stack.push(operator.apply(lhs, rhs));
+                        println!("{operator:?}({lhs}, {rhs}) = {}", stack.last().unwrap());
                     } else {
                         unreachable!();
                     }

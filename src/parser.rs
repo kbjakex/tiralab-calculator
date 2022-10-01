@@ -13,29 +13,32 @@ pub enum Token<'a> {
     BinaryOperator(BinaryOperator),
 }
 
-/// Converts an expression from infix form (`1 + 2`) to postfix form (`1 2 +`) using the
-/// shunting yard algorithm. The result is checked for correctness and any missing
-/// correctness checks should be considered a bug.
-/// 
+/// Converts an expression from infix form (`1 + 2`) to postfix form (`1 2 +`).
+/// The result is checked for correctness and any missing correctness checks
+/// should be considered a bug.
+///
 /// References:
 /// * <http://mathcenter.oxford.emory.edu/site/cs171/shuntingYardAlgorithm/>
 /// * <https://aquarchitect.github.io/swift-algorithm-club/Shunting%20Yard/>
-/// 
+///
 /// # Errors
 /// In the case of a syntax error in the input, an error describing the syntax error
 /// is returned.
-pub fn infix_to_postfix_shunting_yard<'a>(tokens: impl Into<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
+pub fn infix_to_postfix<'a>(tokens: impl Into<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
     let mut iterator = tokens.into().peekable();
     shunting_yard(&mut iterator)
 }
 
 /// The actual implementation. Separated for a nicer interface.
 fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
-    use ParserToken::{BinaryOperator, LeftParen, RightParen, Number, Variable, Function, Delimiter};
+    use ParserToken::{
+        BinaryOperator, Delimiter, Function, LeftParen, Number, RightParen, Variable,
+    };
 
     // Runtime invariant: `operators` does *not* contain numbers, variables or right parens.
     let mut output = Vec::new();
     let mut operators = Vec::new();
+    let mut parameter_counts = Vec::new();
 
     // Shunting yard in itself accepts both postfix and infix, but in this case,
     // I want only infix to be accepted. In infix, after each value or right paren,
@@ -43,58 +46,48 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
     // and so on. This bit of state is enough to verify this.
     let mut expecting_operator = false;
 
+    let mut last_token = None;
     while let Some(token) = tokens.next() {
-        match token? {
-            Number(..) | Variable { .. } if expecting_operator => {
-                bail!("Found two values in a row (missing an operator?)");
-            }
+        let token = token?; // Check for parsing errors
+        println!("{token:?}");
 
-            Number(value) => {
-                output.push(Token::Number(value));
-                expecting_operator = true;
-            }
-            Variable { name } => {
-                output.push(Token::Variable { name });
-                expecting_operator = true;
-            }
+/*         let is_operator = matches!(token, BinaryOperator(..));
+        if expecting_operator && !is_operator {
+            bail!("Found two values in a row (missing an operator?)");
+        }
+        if !expecting_operator && is_operator {
+            bail!("Expected a value, got {token:?} instead (two operators in a row?)");
+        }
+        expecting_operator = !is_operator; */
+
+        match token {
+            Number(value) => output.push(Token::Number(value)),
+            Variable { name } => output.push(Token::Variable { name }),
             Function { name } => {
-                let mut parameter_count = 0;
-                loop {
-                    println!("Param 1");
-                    // Parse function parameters as a separate invocation. Unoptimal, subject to change,
-                    // but easy and safe
-                    output.append(&mut shunting_yard(tokens)?);
-                    parameter_count += 1;
-
-                    /* if let Some(next) = tokens.next() {
-                        match next? {
-                            RightParen => break, 
-                            Delimiter => continue,
-                            other => bail!("Unexpected symbol after function parameter: {other:?}")
-                        }
-                    } else {
-                        bail!("Missing closing )");
-                    } */
-                }
-
-                output.push(Token::Function { name, parameter_count });
-                expecting_operator = true;
+                operators.push(Function { name });
+                parameter_counts.push(0);
             }
             LeftParen => operators.push(LeftParen),
             RightParen => {
                 pop_until_lparen(&mut operators, &mut output);
-                // If there are tokens left, it is an openin paren, so pop that. Otherwise,
+                // If there are tokens left, it is an opening paren, so pop that. Otherwise,
                 // there were more closing parens than opening parens, so report that.
                 if operators.pop().is_none() {
                     bail!("Too many closing parentheses!");
                 }
+                // If on top of operators is a function, that means this ) marks the end of the
+                // function's parameters.
+                if let Some(Function{ name }) = operators.last() {
+                    let mut parameter_count = parameter_counts.pop().unwrap();
+                    if !matches!(last_token, Some(LeftParen)) {
+                        parameter_count += 1;
+                    }
+
+                    output.push(Token::Function { name, parameter_count });
+                    operators.pop();
+                }
             }
             BinaryOperator(operator) => {
-                if !expecting_operator {
-                    bail!("An operator is missing an operand (two operators in a row?)");
-                }
-                expecting_operator = false;
-
                 let precedence = operator.precedence();
 
                 while let Some(&BinaryOperator(top_of_stack)) = operators.last() {
@@ -112,13 +105,26 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
 
                 operators.push(BinaryOperator(operator));
             }
-            Delimiter => break,
+            Delimiter => {
+                if let Some(count) = parameter_counts.last_mut() {
+                    *count += 1;
+                } else {
+                    bail!("`,` outside of a function call");
+                }
+
+                while let Some(&BinaryOperator(top_of_stack)) = operators.last() {
+                    output.push(Token::BinaryOperator(top_of_stack));
+                    operators.pop();
+                }
+            }
         }
+
+        last_token = Some(token);
     }
 
-    if !expecting_operator {
+/*     if !expecting_operator {
         bail!("Expression can't end with an operator");
-    }
+    } */
 
     pop_until_lparen(&mut operators, &mut output);
     // No tokens should remain
@@ -136,7 +142,10 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
         match *top {
             ParserToken::Number(value) => output.push(Token::Number(value)),
             ParserToken::Variable { name } => output.push(Token::Variable { name }),
-            ParserToken::Function { name } => output.push(Token::Function { name, parameter_count: 0 }),
+            ParserToken::Function { name } => output.push(Token::Function {
+                name,
+                parameter_count: 0,
+            }),
             ParserToken::BinaryOperator(operator) => output.push(Token::BinaryOperator(operator)),
             ParserToken::RightParen => unreachable!("operators never contains right parens"),
             ParserToken::Delimiter => unreachable!("operators never contains delimiters"),
@@ -147,7 +156,7 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
 }
 
 /// Represents a token internal to the parser.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ParserToken<'a> {
     Number(f64),
     Variable { name: &'a str },
@@ -197,7 +206,7 @@ impl<'a> TokenIterator<'a> {
         // and ascii is valid UTF-8. Both types have the same representation. Empty source is also fine.
         let str_slice: &str = unsafe { std::mem::transmute(byte_str) };
 
-        self.index = end_index - 1;
+        self.index = end_index;
 
         str_slice
             .parse()
@@ -219,7 +228,7 @@ impl<'a> TokenIterator<'a> {
         // and this is therefore valid UTF-8. Both types have the same representation. Empty source is also fine.
         let str_slice: &str = unsafe { std::mem::transmute(byte_str) };
 
-        self.index = end_index - 1;
+        self.index = end_index;
 
         str_slice
     }
@@ -245,22 +254,22 @@ impl<'a> TokenIterator<'a> {
             b'/' => ParserToken::BinaryOperator(BinaryOperator::Divide),
             b',' => ParserToken::Delimiter,
 
-            c if c.is_ascii_digit() => {
-                self.last_was_number = true;
-                ParserToken::Number(self.read_number()?)
-            }
-            c if c.is_ascii_alphabetic() && self.source.get(self.index + 1) == Some(&b'(') => {
-                let result = ParserToken::Function { name: self.read_identifier() };
-                self.index += 1;
-                result
-            }
-            c if c.is_ascii_alphabetic() => ParserToken::Variable {
-                name: self.read_identifier(),
-            },
+            c => {
+                if c.is_ascii_digit() {
+                    self.last_was_number = true;
+                    return Ok(ParserToken::Number(self.read_number()?));
+                }
+                if c.is_ascii_alphabetic() {
+                    let name = self.read_identifier();
+                    self.skip_spaces();
+                    if self.source.get(self.index) == Some(&b'(') {
+                        return Ok(ParserToken::Function { name });
+                    }
+                    return Ok(ParserToken::Variable { name });
+                }
 
-            // Looks a bit ugly, because the Result is wrapped in an Option (necessitated by Iterator)
-            // and the usual error reporting facilities ('?' operator) don't work with that.
-            other => bail!("Invalid symbol (starts with '{}')", other as char),
+                bail!("Invalid symbol (starts with '{c}')");
+            }
         };
 
         self.index += 1;
@@ -292,7 +301,7 @@ impl<'a> From<&'a str> for TokenIterator<'a> {
 mod tests {
     use crate::{ast::BinaryOperator, parser::Token};
 
-    use super::infix_to_postfix_shunting_yard;
+    use super::infix_to_postfix;
 
     // A macro to make building expected solutions not enormously verbose. Macros are unfortunately
     // fairly unreadable, but you can probably mostly infer what it does from the usage in below tests.
@@ -312,87 +321,78 @@ mod tests {
 
     #[test]
     fn test_reports_mismatched_parentheses() {
-        assert!(infix_to_postfix_shunting_yard("(()").is_err());
-        assert!(infix_to_postfix_shunting_yard("())").is_err());
-        assert!(infix_to_postfix_shunting_yard("(").is_err());
-        assert!(infix_to_postfix_shunting_yard(")").is_err());
+        assert!(infix_to_postfix("(()").is_err());
+        assert!(infix_to_postfix("())").is_err());
+        assert!(infix_to_postfix("(").is_err());
+        assert!(infix_to_postfix(")").is_err());
     }
 
     #[test]
     fn test_valid_numbers_are_accepted() {
         // This is implemented using standard library routines so actual parsing need not to
         // be tested, fortunately, but test anyways that valid inputs aren't rejected.
-        assert!(infix_to_postfix_shunting_yard("0").is_ok());
-        assert!(infix_to_postfix_shunting_yard("0.0").is_ok());
-        assert!(infix_to_postfix_shunting_yard("0.").is_ok());
-        assert!(infix_to_postfix_shunting_yard("3.1415936535").is_ok());
+        assert!(infix_to_postfix("0").is_ok());
+        assert!(infix_to_postfix("0.0").is_ok());
+        assert!(infix_to_postfix("0.").is_ok());
+        assert!(infix_to_postfix("3.1415936535").is_ok());
     }
 
     #[test]
     fn test_invalid_numbers_are_rejected() {
-        assert!(infix_to_postfix_shunting_yard(".0").is_err());
-        assert!(infix_to_postfix_shunting_yard("0..").is_err());
-        assert!(infix_to_postfix_shunting_yard("..0").is_err());
-        assert!(infix_to_postfix_shunting_yard(".0.").is_err());
+        assert!(infix_to_postfix(".0").is_err());
+        assert!(infix_to_postfix("0..").is_err());
+        assert!(infix_to_postfix("..0").is_err());
+        assert!(infix_to_postfix(".0.").is_err());
     }
 
     #[test]
     fn test_valid_expressions() {
-        assert_eq!(
-            tokens![5 5 +],
-            infix_to_postfix_shunting_yard("5. + 5.").unwrap()
-        );
+        assert_eq!(tokens![5 5 +], infix_to_postfix("5. + 5.").unwrap());
         assert_eq!(
             tokens![5 5 + 3 3 + *],
-            infix_to_postfix_shunting_yard("(5 + 5) * (3 + 3)").unwrap()
+            infix_to_postfix("(5 + 5) * (3 + 3)").unwrap()
         );
         assert_eq!(
             tokens![5 5 + 3 * 3 +],
-            infix_to_postfix_shunting_yard("(5 + 5) * 3 + 3").unwrap()
+            infix_to_postfix("(5 + 5) * 3 + 3").unwrap()
         );
         assert_eq!(
             tokens![5 5 3 * + 3 +],
-            infix_to_postfix_shunting_yard("5 + 5 * 3 + 3").unwrap()
+            infix_to_postfix("5 + 5 * 3 + 3").unwrap()
         );
         assert_eq!(
             tokens![5 5 3 3 + * +],
-            infix_to_postfix_shunting_yard("5 + 5 * (3 + 3)").unwrap()
+            infix_to_postfix("5 + 5 * (3 + 3)").unwrap()
         );
     }
 
     #[test]
     fn test_variables_work() {
-        assert_eq!(
-            tokens![a 3 +],
-            infix_to_postfix_shunting_yard("a + 3").unwrap()
-        );
+        assert_eq!(tokens![a 3 +], infix_to_postfix("a + 3").unwrap());
         assert_eq!(
             tokens![variable 3 +],
-            infix_to_postfix_shunting_yard("variable + 3").unwrap()
+            infix_to_postfix("variable + 3").unwrap()
         );
         assert_eq!(
             tokens![x x * y y * -],
-            infix_to_postfix_shunting_yard("x*x - y*y").unwrap()
+            infix_to_postfix("x*x - y*y").unwrap()
         );
     }
 
     #[test]
     fn test_implicit_multiply() {
-        assert_eq!(
-            tokens![2 x *],
-            infix_to_postfix_shunting_yard("2x").unwrap()
-        );
+        assert_eq!(tokens![2 x *], infix_to_postfix("2x").unwrap());
         // I don't want implicit multiplication to work with parentheses I think?
-        assert!(infix_to_postfix_shunting_yard("2(a+b)").is_err());
+        assert!(infix_to_postfix("2(a+b)").is_err());
     }
 
     #[test]
     fn test_postfix_is_rejected() {
         // Shunting yard accepts postfix by default. Test that it is rejected after my modifications.
-        assert!(infix_to_postfix_shunting_yard("1 2 + 3 *").is_err());
-        assert!(infix_to_postfix_shunting_yard("1 2 +").is_err());
-        assert!(infix_to_postfix_shunting_yard("a + +").is_err());
-        assert!(infix_to_postfix_shunting_yard("a +").is_err());
-        assert!(infix_to_postfix_shunting_yard("+ a").is_err());
+        assert!(infix_to_postfix("1 2 + 3 *").is_err());
+        assert!(infix_to_postfix("1 2 +").is_err());
+        assert!(infix_to_postfix("a + +").is_err());
+        assert!(infix_to_postfix("a +").is_err());
+        assert!(infix_to_postfix("+ a").is_err());
     }
 }
