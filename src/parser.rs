@@ -31,9 +31,7 @@ pub fn infix_to_postfix<'a>(tokens: impl Into<TokenIterator<'a>>) -> Result<Vec<
 
 /// The actual implementation. Separated for a nicer interface.
 fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
-    use ParserToken::{
-        BinaryOperator, Delimiter, Function, LeftParen, Number, RightParen, Variable,
-    };
+    use ParserToken::*;
 
     // Runtime invariant: `operators` does *not* contain numbers, variables or right parens.
     let mut output = Vec::new();
@@ -51,14 +49,7 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
         let token = token?; // Check for parsing errors
         println!("{token:?}");
 
-/*         let is_operator = matches!(token, BinaryOperator(..));
-        if expecting_operator && !is_operator {
-            bail!("Found two values in a row (missing an operator?)");
-        }
-        if !expecting_operator && is_operator {
-            bail!("Expected a value, got {token:?} instead (two operators in a row?)");
-        }
-        expecting_operator = !is_operator; */
+        validate_syntax(last_token, token)?;
 
         match token {
             Number(value) => output.push(Token::Number(value)),
@@ -77,13 +68,16 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
                 }
                 // If on top of operators is a function, that means this ) marks the end of the
                 // function's parameters.
-                if let Some(Function{ name }) = operators.last() {
+                if let Some(Function { name }) = operators.last() {
                     let mut parameter_count = parameter_counts.pop().unwrap();
                     if !matches!(last_token, Some(LeftParen)) {
                         parameter_count += 1;
                     }
 
-                    output.push(Token::Function { name, parameter_count });
+                    output.push(Token::Function {
+                        name,
+                        parameter_count,
+                    });
                     operators.pop();
                 }
             }
@@ -122,7 +116,10 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
         last_token = Some(token);
     }
 
-/*     if !expecting_operator {
+    if matches!(last_token, Some(ParserToken::BinaryOperator(..))) {
+        bail!("Trailing operator");
+    }
+    /*     if !expecting_operator {
         bail!("Expression can't end with an operator");
     } */
 
@@ -147,12 +144,56 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
                 parameter_count: 0,
             }),
             ParserToken::BinaryOperator(operator) => output.push(Token::BinaryOperator(operator)),
+            /* ParserToken::UnaryOperator(operator) => output.push(Token::UnaryOperator(operator)), */
             ParserToken::RightParen => unreachable!("operators never contains right parens"),
             ParserToken::Delimiter => unreachable!("operators never contains delimiters"),
             ParserToken::LeftParen => return,
         }
         operators.pop();
     }
+}
+
+fn validate_syntax(last: Option<ParserToken>, token: ParserToken) -> anyhow::Result<()> {
+    let last = match last {
+        Some(token) => token,
+        None => {
+            if matches!(token, ParserToken::BinaryOperator(..)) {
+                bail!("Can't start with an operator!");
+            }
+            return Ok(());
+        },
+    };
+
+    match token {
+        ParserToken::Number(..) | ParserToken::Variable { .. } | ParserToken::Function { .. } => {
+            if !matches!(last, ParserToken::BinaryOperator(..) | ParserToken::LeftParen | ParserToken::Delimiter) {
+                bail!("A value must be preceded by either an operator or an opening parentheses; found {last:?}");
+            }
+        }
+        ParserToken::Delimiter => {
+            if matches!(last, ParserToken::BinaryOperator(..)) {
+                bail!("Parameter ends with an operator");
+            }
+        },
+        ParserToken::BinaryOperator(..) => {
+            if !matches!(last, ParserToken::Number(..) | ParserToken::Variable{ .. } | ParserToken::RightParen) {
+                bail!("An operator must be preceded by a value (a number, variable or a function call); found {last:?}");
+            }
+        },
+        ParserToken::LeftParen => {
+            if !matches!(last, ParserToken::Function { .. } | ParserToken::BinaryOperator(..)) {
+                bail!("An opening parentheses `(` must be preceded by an operator");
+            }
+        }
+        ParserToken::RightParen => {
+            if matches!(last, ParserToken::LeftParen) {
+                bail!("Found empty parentheses `()`");
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
 }
 
 /// Represents a token internal to the parser.
@@ -163,6 +204,7 @@ pub enum ParserToken<'a> {
     Function { name: &'a str },
     Delimiter,
     BinaryOperator(BinaryOperator),
+    /* UnaryOperator(UnaryOperator), */
     LeftParen,
     RightParen,
 }

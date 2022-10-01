@@ -39,7 +39,7 @@ impl BinaryOperator {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     Negate
 }
