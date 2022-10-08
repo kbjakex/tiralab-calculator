@@ -386,7 +386,7 @@ impl<'a> From<&'a str> for TokenIterator<'a> {
 #[rustfmt::skip] // rustfmt keeps splitting the asserts which ends up actually hurting readability
 #[cfg(test)]
 mod tests {
-    use crate::{ast::BinaryOperator, parser::Token};
+    use crate::{ast::BinaryOperator, ast::UnaryOperator, parser::Token};
 
     use super::infix_to_postfix;
 
@@ -397,7 +397,9 @@ mod tests {
         (-) => {Token::BinaryOperator(BinaryOperator::Subtract)};
         (*) => {Token::BinaryOperator(BinaryOperator::Multiply)};
         (/) => {Token::BinaryOperator(BinaryOperator::Divide)};
-        (u-) => {Token::UnaryOperator(UnaryOperator::Negate)};
+        (^) => {Token::BinaryOperator(BinaryOperator::Power)};
+        (%) => {Token::BinaryOperator(BinaryOperator::Remainder)};
+        (~) => {Token::UnaryOperator(UnaryOperator::Negate)};
         ($lit:literal) => {Token::Number($lit as f64) };
         ($name:ident) => (Token::Variable{ name: stringify!($name) });
         // Loop over space-separated input tokens, parse them with the token! macro, and build
@@ -440,6 +442,23 @@ mod tests {
         assert_eq!(tokens![5 5 + 3 * 3 +], infix_to_postfix("(5 + 5) * 3 + 3").unwrap());
         assert_eq!(tokens![5 5 3 * + 3 +], infix_to_postfix("5 + 5 * 3 + 3").unwrap());
         assert_eq!(tokens![5 5 3 3 + * +], infix_to_postfix("5 + 5 * (3 + 3)").unwrap());
+    }
+
+    #[test]
+    fn test_unary_works() {
+        // ~ represents unary minus 
+        assert_eq!(tokens![5 ~], infix_to_postfix("-5").unwrap());
+        assert_eq!(tokens![5 ~ 5 ~ -], infix_to_postfix("-5 - -5").unwrap());
+        assert_eq!(tokens![2 3 + ~], infix_to_postfix("-(2+3)").unwrap());
+        assert_eq!(tokens![5 3 ~ /], infix_to_postfix("5 / -3").unwrap());
+    }
+
+    #[test]
+    fn test_power_operator_works() {
+        assert_eq!(infix_to_postfix("2^(3^4)").unwrap(), infix_to_postfix("2^3^4").unwrap());
+        assert_eq!(tokens![2 3 4 ^ ^], infix_to_postfix("2^3^4").unwrap());
+        assert_eq!(infix_to_postfix("-5^2").unwrap(), infix_to_postfix("-(5^2)").unwrap());
+        assert_eq!(tokens![5 2 ^ ~], infix_to_postfix("-5^2").unwrap());
     }
 
     #[test]
