@@ -1,9 +1,7 @@
-use std::iter::Peekable;
-
 use anyhow::{anyhow, bail, Result};
 use bstr::BStr;
 
-use crate::ast::BinaryOperator;
+use crate::ast::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
@@ -11,6 +9,7 @@ pub enum Token<'a> {
     Variable { name: &'a str },
     Function { name: &'a str, parameter_count: u32 },
     BinaryOperator(BinaryOperator),
+    UnaryOperator(UnaryOperator),
 }
 
 /// Converts an expression from infix form (`1 + 2`) to postfix form (`1 2 +`).
@@ -25,13 +24,25 @@ pub enum Token<'a> {
 /// In the case of a syntax error in the input, an error describing the syntax error
 /// is returned.
 pub fn infix_to_postfix<'a>(tokens: impl Into<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
-    let mut iterator = tokens.into().peekable();
-    shunting_yard(&mut iterator)
+    let mut iterator = tokens.into();
+    match shunting_yard(&mut iterator) {
+        Ok(result) => Ok(result),
+        Err(e) => bail!("Syntax error: {e}"),
+    }
 }
 
 /// The actual implementation. Separated for a nicer interface.
-fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Token<'a>>> {
+fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
+    use crate::ast::BinaryOperator as BinOp;
+    use crate::ast::UnaryOperator as UnOp;
     use ParserToken::*;
+
+    fn assert_value_is_valid_here(token: ParserToken, prev_token: Option<ParserToken>) -> anyhow::Result<()> {
+        if !matches!(prev_token, None | Some(Delimiter | LeftParen | UnaryOperator(..) | BinaryOperator(..))) {
+            bail!("A value (`{token}`) is not valid after `{}`", prev_token.unwrap());
+        }
+        Ok(())
+    }
 
     // Runtime invariant: `operators` does *not* contain numbers, variables or right parens.
     let mut output = Vec::new();
@@ -42,17 +53,35 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
     while let Some(token) = tokens.next() {
         let token = token?; // Check for parsing errors
 
-        validate_syntax(last_token, token)?;
-
         match token {
-            Number(value) => output.push(Token::Number(value)),
-            Variable { name } => output.push(Token::Variable { name }),
+            Number(value) => {
+                assert_value_is_valid_here(token, last_token)?;
+                output.push(Token::Number(value));
+            }
+            Variable { name } => {
+                assert_value_is_valid_here(token, last_token)?;
+                output.push(Token::Variable { name });
+            }
             Function { name } => {
+                assert_value_is_valid_here(token, last_token)?;
                 operators.push(Function { name });
                 parameter_counts.push(0);
             }
-            LeftParen => operators.push(LeftParen),
+            LeftParen => {
+                if matches!(last_token, Some(Number(..))) {
+                    bail!("`(` is not valid after `{}`", last_token.unwrap());
+                }
+                operators.push(LeftParen);
+            }
             RightParen => {
+                if matches!(last_token, Some(Delimiter)) {
+                    bail!("Empty function parameter after `,`");
+                } 
+
+                if matches!(last_token, Some(LeftParen)) && !matches!(&operators[..], &[.., ParserToken::Function { .. }, _]) {
+                    bail!("Empty parentheses is invalid");
+                }
+
                 pop_until_lparen(&mut operators, &mut output);
                 // If there are tokens left, it is an opening paren, so pop that. Otherwise,
                 // there were more closing parens than opening parens, so report that.
@@ -74,25 +103,67 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
                     operators.pop();
                 }
             }
+            UnaryOperator(operator) => {
+                if matches!(last_token, Some(UnaryOperator(..))) {
+                    bail!("Two (unary) operators in a row (`{token}` and `{}`)", last_token.unwrap());
+                }
+                operators.push(UnaryOperator(operator));
+            }
             BinaryOperator(operator) => {
+                // Detect unary -
+                if matches!(last_token, None | Some(LeftParen | UnaryOperator(..) | BinaryOperator(..)))
+                    && matches!(operator, BinOp::Subtract)
+                {
+                    if matches!(last_token, Some(UnaryOperator(..))) {
+                        bail!("Two (unary) operators in a row (`{token}` and `{}`)", last_token.unwrap());
+                    }
+                    operators.push(UnaryOperator(UnOp::Negate));
+                    last_token = Some(UnaryOperator(UnOp::Negate));
+                    continue;
+                }
+
+                if matches!(last_token, Some(UnaryOperator(..) | BinaryOperator(..))) {
+                    bail!("Two operators in a row (`{token}` and `{}`)", last_token.unwrap());
+                }
+                if matches!(last_token, None) {
+                    bail!("Can't start with a binary (two-operand) operator");
+                }
+
                 let precedence = operator.precedence();
+                let left_associative = operator.left_associative();
 
-                while let Some(&BinaryOperator(top_of_stack)) = operators.last() {
-                    let top_precedence = top_of_stack.precedence();
+                loop {
+                    match operators.last() {
+                        Some(&BinaryOperator(top_of_stack)) => {
+                            let top_precedence = top_of_stack.precedence();
 
-                    if (operator.left_associative() && precedence <= top_precedence)
-                        || (!operator.left_associative() && precedence < top_precedence)
-                    {
-                        output.push(Token::BinaryOperator(top_of_stack));
-                        operators.pop();
-                    } else {
-                        break;
+                            if (left_associative && precedence <= top_precedence)
+                                || (!left_associative && precedence < top_precedence)
+                            {
+                                output.push(Token::BinaryOperator(top_of_stack));
+                                operators.pop();
+                            } else {
+                                break;
+                            }
+                        }
+                        Some(&UnaryOperator(top_of_stack)) => {
+                            if !left_associative {
+                                break;
+                            }
+                            output.push(Token::UnaryOperator(top_of_stack));
+                            operators.pop();
+                        }
+                        _ => break,
                     }
                 }
 
                 operators.push(BinaryOperator(operator));
             }
             Delimiter => {
+                if matches!(last_token, Some(LeftParen | Delimiter)) {
+                    bail!("Empty function parameter before a `,`");
+                }
+
                 if let Some(count) = parameter_counts.last_mut() {
                     *count += 1;
                 } else {
@@ -109,11 +180,12 @@ fn shunting_yard<'a>(tokens: &mut Peekable<TokenIterator<'a>>) -> Result<Vec<Tok
         last_token = Some(token);
     }
 
-    if matches!(last_token, Some(ParserToken::BinaryOperator(..))) {
-        bail!("Trailing operator");
+    if matches!(last_token, Some(BinaryOperator(..) | UnaryOperator(..))) {
+        bail!("Trailing operator (`{}`)", last_token.unwrap());
     }
 
     pop_until_lparen(&mut operators, &mut output);
+
     // No tokens should remain
     if !operators.is_empty() {
         bail!("Too many opening parentheses!");
@@ -134,55 +206,13 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
                 parameter_count: 0,
             }),
             ParserToken::BinaryOperator(operator) => output.push(Token::BinaryOperator(operator)),
-            /* ParserToken::UnaryOperator(operator) => output.push(Token::UnaryOperator(operator)), */
+            ParserToken::UnaryOperator(operator) => output.push(Token::UnaryOperator(operator)),
             ParserToken::RightParen => unreachable!("operators never contains right parens"),
             ParserToken::Delimiter => unreachable!("operators never contains delimiters"),
             ParserToken::LeftParen => return,
         }
         operators.pop();
     }
-}
-
-fn validate_syntax(last: Option<ParserToken>, token: ParserToken) -> anyhow::Result<()> {
-    let last = match last {
-        Some(token) => token,
-        None => {
-            if matches!(token, ParserToken::BinaryOperator(..)) {
-                bail!("Can't start with an operator!");
-            }
-            return Ok(());
-        },
-    };
-
-    match token {
-        ParserToken::Number(..) | ParserToken::Variable { .. } | ParserToken::Function { .. } => {
-            if !matches!(last, ParserToken::BinaryOperator(..) | ParserToken::LeftParen | ParserToken::Delimiter) {
-                bail!("A value must be preceded by either an operator or an opening parentheses; found {last:?}");
-            }
-        }
-        ParserToken::Delimiter => {
-            if matches!(last, ParserToken::BinaryOperator(..)) {
-                bail!("Parameter ends with an operator");
-            }
-        },
-        ParserToken::BinaryOperator(..) => {
-            if !matches!(last, ParserToken::Number(..) | ParserToken::Variable{ .. } | ParserToken::RightParen) {
-                bail!("An operator must be preceded by a value (a number, variable or a function call); found {last:?}");
-            }
-        },
-        ParserToken::LeftParen => {
-            if !matches!(last, ParserToken::Function { .. } | ParserToken::BinaryOperator(..)) {
-                bail!("An opening parentheses `(` must be preceded by an operator");
-            }
-        }
-        ParserToken::RightParen => {
-            if matches!(last, ParserToken::LeftParen) {
-                bail!("Found empty parentheses `()`");
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Represents a token internal to the parser.
@@ -193,9 +223,33 @@ pub enum ParserToken<'a> {
     Function { name: &'a str },
     Delimiter,
     BinaryOperator(BinaryOperator),
-    /* UnaryOperator(UnaryOperator), */
+    UnaryOperator(UnaryOperator),
     LeftParen,
     RightParen,
+}
+
+impl std::fmt::Display for ParserToken<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            ParserToken::Number(x) => write!(f, "{x}"),
+            ParserToken::Variable { name } => f.write_str(name),
+            ParserToken::Function { name } => f.write_str(name),
+            ParserToken::Delimiter => f.write_str(","),
+            ParserToken::BinaryOperator(op) => match op {
+                BinaryOperator::Add => f.write_str("+"),
+                BinaryOperator::Subtract => f.write_str("-"),
+                BinaryOperator::Multiply => f.write_str("*"),
+                BinaryOperator::Divide => f.write_str("/"),
+                BinaryOperator::Remainder => f.write_str("%"),
+                BinaryOperator::Power => f.write_str("^"),
+            },
+            ParserToken::UnaryOperator(op) => match op {
+                UnaryOperator::Negate => f.write_str("-"),
+            },
+            ParserToken::LeftParen => f.write_str("("),
+            ParserToken::RightParen => f.write_str(")"),
+        }
+    }
 }
 
 pub struct TokenIterator<'a> {
@@ -283,6 +337,7 @@ impl<'a> TokenIterator<'a> {
             b'-' => ParserToken::BinaryOperator(BinaryOperator::Subtract),
             b'*' => ParserToken::BinaryOperator(BinaryOperator::Multiply),
             b'/' => ParserToken::BinaryOperator(BinaryOperator::Divide),
+            b'^' => ParserToken::BinaryOperator(BinaryOperator::Power),
             b',' => ParserToken::Delimiter,
 
             c => {
@@ -299,7 +354,7 @@ impl<'a> TokenIterator<'a> {
                     return Ok(ParserToken::Variable { name });
                 }
 
-                bail!("Invalid symbol (starts with '{c}')");
+                bail!("Invalid token `{}` (at `{}`)", c as char, unsafe { std::mem::transmute::<&[u8], &str>(&self.source[self.index..])});
             }
         };
 
@@ -328,6 +383,7 @@ impl<'a> From<&'a str> for TokenIterator<'a> {
     }
 }
 
+#[rustfmt::skip] // rustfmt keeps splitting the asserts which ends up actually hurting readability
 #[cfg(test)]
 mod tests {
     use crate::{ast::BinaryOperator, parser::Token};
@@ -341,6 +397,7 @@ mod tests {
         (-) => {Token::BinaryOperator(BinaryOperator::Subtract)};
         (*) => {Token::BinaryOperator(BinaryOperator::Multiply)};
         (/) => {Token::BinaryOperator(BinaryOperator::Divide)};
+        (u-) => {Token::UnaryOperator(UnaryOperator::Negate)};
         ($lit:literal) => {Token::Number($lit as f64) };
         ($name:ident) => (Token::Variable{ name: stringify!($name) });
         // Loop over space-separated input tokens, parse them with the token! macro, and build
@@ -379,35 +436,17 @@ mod tests {
     #[test]
     fn test_valid_expressions() {
         assert_eq!(tokens![5 5 +], infix_to_postfix("5. + 5.").unwrap());
-        assert_eq!(
-            tokens![5 5 + 3 3 + *],
-            infix_to_postfix("(5 + 5) * (3 + 3)").unwrap()
-        );
-        assert_eq!(
-            tokens![5 5 + 3 * 3 +],
-            infix_to_postfix("(5 + 5) * 3 + 3").unwrap()
-        );
-        assert_eq!(
-            tokens![5 5 3 * + 3 +],
-            infix_to_postfix("5 + 5 * 3 + 3").unwrap()
-        );
-        assert_eq!(
-            tokens![5 5 3 3 + * +],
-            infix_to_postfix("5 + 5 * (3 + 3)").unwrap()
-        );
+        assert_eq!(tokens![5 5 + 3 3 + *], infix_to_postfix("(5 + 5) * (3 + 3)").unwrap());
+        assert_eq!(tokens![5 5 + 3 * 3 +], infix_to_postfix("(5 + 5) * 3 + 3").unwrap());
+        assert_eq!(tokens![5 5 3 * + 3 +], infix_to_postfix("5 + 5 * 3 + 3").unwrap());
+        assert_eq!(tokens![5 5 3 3 + * +], infix_to_postfix("5 + 5 * (3 + 3)").unwrap());
     }
 
     #[test]
     fn test_variables_work() {
         assert_eq!(tokens![a 3 +], infix_to_postfix("a + 3").unwrap());
-        assert_eq!(
-            tokens![variable 3 +],
-            infix_to_postfix("variable + 3").unwrap()
-        );
-        assert_eq!(
-            tokens![x x * y y * -],
-            infix_to_postfix("x*x - y*y").unwrap()
-        );
+        assert_eq!(tokens![variable 3 +], infix_to_postfix("variable + 3").unwrap());
+        assert_eq!(tokens![x x * y y * -], infix_to_postfix("x*x - y*y").unwrap());
     }
 
     #[test]

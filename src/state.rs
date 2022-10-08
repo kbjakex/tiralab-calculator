@@ -3,7 +3,10 @@ use std::ops::Deref;
 use anyhow::bail;
 use bevy_utils::HashMap;
 
-use crate::{ast::BinaryOperator, parser};
+use crate::{
+    ast::{BinaryOperator, UnaryOperator},
+    parser,
+};
 
 #[derive(Default)]
 pub struct CalculatorState {
@@ -15,6 +18,7 @@ pub struct CalculatorState {
 enum Token {
     Constant(f64),
     BinaryOperator(BinaryOperator),
+    UnaryOperator(UnaryOperator),
     FunctionCall {
         name: Box<str>,
         parameter_count: u32,
@@ -65,13 +69,20 @@ impl Function {
                     }
                 }
                 parser::Token::Function {
-                    name,
+                    name: called_fn_name,
                     parameter_count,
                 } => {
+                    if called_fn_name == name.as_ref() {
+                        bail!("Recursion is not allowed!");
+                    }
+
                     resolved.push(Token::FunctionCall {
-                        name: name.into(),
+                        name: called_fn_name.into(),
                         parameter_count,
                     });
+                }
+                parser::Token::UnaryOperator(operator) => {
+                    resolved.push(Token::UnaryOperator(operator));
                 }
                 parser::Token::BinaryOperator(operator) => {
                     resolved.push(Token::BinaryOperator(operator));
@@ -113,6 +124,13 @@ impl Function {
 
                         stack.drain(stack.len() - parameter_count..);
                         stack.push(result);
+                    }
+                }
+                Token::UnaryOperator(operator) => {
+                    if let Some(x) = stack.last_mut() {
+                        *x = operator.apply(*x);
+                    } else {
+                        unreachable!()
                     }
                 }
                 Token::BinaryOperator(operator) => {
@@ -181,18 +199,25 @@ mod tests {
     #[test]
     fn test_function_calls_work() {
         let mut state = CalculatorState::default();
-        let test_fn = Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state).unwrap();
+        let test_fn =
+            Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state)
+                .unwrap();
         state.functions.insert("f".into(), test_fn);
 
         assert_eq!(3.0 * 5.0 / 7.0, eval(&state, "f(3, 5, 7)", &[], &[]));
-        assert_eq!(3.0 * 5.0 / 7.0, eval(&state, "f(x, y, z)", &["x", "y", "z"], &[3.0, 5.0, 7.0]));
+        assert_eq!(
+            3.0 * 5.0 / 7.0,
+            eval(&state, "f(x, y, z)", &["x", "y", "z"], &[3.0, 5.0, 7.0])
+        );
     }
 
     #[test]
     fn test_parameter_count_mismatch_errors() {
         let state = CalculatorState::default();
-        let test_fn = Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state).unwrap();
-        
+        let test_fn =
+            Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state)
+                .unwrap();
+
         assert!(test_fn.evaluate(&state, &[]).is_err());
         assert!(test_fn.evaluate(&state, &[1.0]).is_err());
         assert!(test_fn.evaluate(&state, &[1.0, 2.0]).is_err());

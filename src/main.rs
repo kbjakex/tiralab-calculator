@@ -36,8 +36,10 @@ fn main() {
             break;
         }
 
-        if let Err(e) = process_input(&mut state, line) {
-            println!("Syntax error: {e}");
+        match process_input(&mut state, &line) {
+            Ok(Some(output)) => println!("{output}"),
+            Ok(None) => {},
+            Err(e) => println!("{e}"),
         }
 
         print_input_expected_marker();
@@ -50,21 +52,21 @@ fn main() {
 /// # Errors
 /// If the input string was not syntactically valid, an error describing the
 /// problem is returned.
-fn process_input(state: &mut CalculatorState, input: String) -> Result<()> {
+fn process_input(state: &mut CalculatorState, input: &str) -> Result<Option<f64>> {
     if input.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     if let Some((start, rest)) = input.split_once('=') {
-        return process_variable_or_function(state, start, rest);
+        process_variable_or_function(state, start.trim(), rest.trim())?;
+        return Ok(None);
     }
 
     // Neither a variable nor a function, so simply evaluate
-    let mut postfix = parser::infix_to_postfix(input.as_str())?;
+    let mut postfix = parser::infix_to_postfix(input)?;
+    let result = eval_postfix(&mut postfix, state)?;
 
-    println!("{}", eval_postfix(&mut postfix, state)?);
-
-    Ok(())
+    Ok(Some(result))
 }
 
 /// Declare a function or a variable based on the input.
@@ -74,6 +76,9 @@ fn process_variable_or_function(
     start: &str, // parts before the = sign, i.e variable or function name
     rest: &str,
 ) -> Result<()> {
+    if start.is_empty() {
+        bail!("Syntax error: can't start with a `=`");
+    }
     let mut tokens = TokenIterator::of(start);
 
     // 1. Variable and function should both begin with what is a valid variable name
@@ -82,69 +87,98 @@ fn process_variable_or_function(
     match identifier_token {
         ParserToken::Variable { name } => {
             if tokens.next().is_some() {
-                bail!("Invalid syntax (interpreted as variable declaration, which should be `name = value`)");
+                bail!("Syntax error: extra tokens after variable name (interpreted as variable declaration, which should be `name = value`)");
             }
-            let mut value_tokens = infix_to_postfix(rest)?;
-            let value = eval_postfix(&mut value_tokens, state)?;
-            state
-                .variables
-                .entry(name.to_owned())
-                .and_modify(|old_value| {
-                    *old_value = value;
-                    println!("{name} changed from {} to {value}", *old_value);
-                })
-                .or_insert_with(|| {
-                    println!("{name} = {value}");
-                    value
-                });
+            process_variable(name, rest, state)?;
         }
         ParserToken::Function { name } => {
-            assert!(matches!(tokens.next().unwrap()?, ParserToken::LeftParen));
-            let mut param_names = Vec::new();
-            let mut expecting_identifier = true;
-            loop {
-                if let Some(next) = tokens.next() {
-                    let next = next?;
-
-                    match next {
-                        ParserToken::Variable { name } => param_names.push(name),
-                        ParserToken::Delimiter => {}
-                        ParserToken::RightParen => break,
-                        other => bail!("'{other:?}' not allowed in function declaration!"),
-                    }
-
-                    let is_identifier = matches!(next, ParserToken::Variable { .. });
-                    if expecting_identifier && !is_identifier {
-                        bail!("Expected parameter name, got '{next:?}");
-                    }
-                    if !expecting_identifier && is_identifier {
-                        bail!("Expected `,` or `)`, got identifier '{next:?}'");
-                    }
-                    expecting_identifier = !is_identifier;
-                } else {
-                    bail!("Missing closing ) for function declaration");
-                }
-            }
-
-            if tokens.next().is_some() {
-                bail!("Found extra symbols after function name");
-            }
-
-            let function =
-                Function::from_name_and_expression(name.into(), rest, &param_names, state)?;
-
-            if state.functions.insert(name.to_owned(), function).is_some() {
-                println!("Updated function '{name}'");
-            } else {
-                println!("Defined function '{name}'!");
-            }
+            debug_assert!(matches!(tokens.next().unwrap()?, ParserToken::LeftParen));
+            process_function(name, tokens, rest, state)?;
         }
-        _ => {
-            bail!("Invalid syntax");
-        }
+        other => bail!("Syntax error: found `=`, but input did not start with a function/variable name, but `{other}`")
     }
 
     Ok(())
+}
+
+fn process_variable(variable_name: &str, rest: &str, state: &mut CalculatorState) -> anyhow::Result<()> {
+    if rest.is_empty() {
+        bail!("Value (after `=`) can't be empty");
+    }
+
+    let mut value_tokens = infix_to_postfix(rest)?;
+    let value = eval_postfix(&mut value_tokens, state)?;
+    state
+        .variables
+        .entry(variable_name.to_owned())
+        .and_modify(|old_value| {
+            *old_value = value;
+            println!("{variable_name} changed from {} to {value}", *old_value);
+        })
+        .or_insert_with(|| {
+            println!("{variable_name} = {value}");
+            value
+        });
+
+    Ok(())
+}
+
+fn process_function(function_name: &str, tokens: TokenIterator<'_>, rest: &str, state: &mut CalculatorState) -> anyhow::Result<()> {
+    if rest.is_empty() {
+        bail!("Value (after `=`) can't be empty");
+    }
+
+    let parameters = parse_function_parameters(tokens)?;    
+
+    let function =
+        Function::from_name_and_expression(function_name.into(), rest, &parameters, state)?;
+
+    if state.functions.insert(function_name.into(), function).is_some() {
+        println!("Updated function '{function_name}'");
+    } else {
+        println!("Defined function '{function_name}'!");
+    }
+    Ok(())
+}
+
+fn parse_function_parameters<'a>(mut tokens: TokenIterator<'a>) -> anyhow::Result<Vec<&'a str>> {
+    let mut param_names = Vec::new();
+    let mut expecting_identifier = true;
+    let mut prev_token = None;
+    loop {
+        if let Some(next) = tokens.next() {
+            let next = next?;
+
+            match next {
+                ParserToken::Variable { name } => param_names.push(name),
+                ParserToken::Delimiter => {}
+                ParserToken::RightParen => break,
+                other => bail!("'{other:?}' not allowed in function declaration!"),
+            }
+
+            let is_identifier = matches!(next, ParserToken::Variable { .. });
+            if expecting_identifier && !is_identifier {
+                bail!("Expected parameter name, got '{next:?}");
+            }
+            if !expecting_identifier && is_identifier {
+                bail!("Expected `,` or `)`, got identifier '{next:?}'");
+            }
+            expecting_identifier = !is_identifier;
+            prev_token = Some(next);
+        } else {
+            bail!("Missing closing ) for function declaration");
+        }
+    }
+
+    if matches!(prev_token, Some(ParserToken::Delimiter)) {
+        bail!("Last parameter name is empty");
+    }
+
+    if tokens.next().is_some() {
+        bail!("Found extra symbols after function name");
+    }
+
+    Ok(param_names)
 }
 
 /// Attempts to evaluate the postfix expression. Evaluation happens in-place, treating the
@@ -154,57 +188,86 @@ fn process_variable_or_function(
 /// # Errors
 /// Should an error occur, a human-readable message describing the issue is returned.
 fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<f64> {
-    let mut head = 0;
-    for i in 0..tokens.len() {
-        match tokens[i] {
-            Token::Number(value) => {
-                tokens[head] = Token::Number(value);
-                head += 1;
-            }
-            Token::Variable { name } => {
-                if let Some(&resolved) = state.variables.get(name) {
-                    tokens[head] = Token::Number(resolved);
-                    head += 1;
-                } else {
-                    bail!("Variable '{name}' not found");
-                };
-            }
-            Token::Function {
-                name,
-                parameter_count,
-            } => {
-                if let Some(function) = state.functions.get(name) {
-                    let mut parameters = [0f64; 8];
-                    for i in 0..parameter_count as usize {
-                        parameters[parameter_count as usize - 1 - i] = match tokens[head - i - 1] {
-                            Token::Number(value) => value,
-                            _ => unreachable!(),
-                        }
-                    }
+    // Re-use evaluation implemented for functions
+    let function = Function::from_name_and_tokens("".into(), tokens, &[], state)?;
+    function.evaluate(state, &[])
+}
 
-                    head -= parameter_count as usize;
-                    tokens[head] = Token::Number(
-                        function.evaluate(state, &parameters[..parameter_count as usize])?,
-                    );
-                    head += 1;
-                } else {
-                    bail!("Function '{name}' not found");
-                }
-            }
-            Token::BinaryOperator(operator) => match (&tokens[head - 2], &tokens[head - 1]) {
-                (&Token::Number(lhs), &Token::Number(rhs)) => {
-                    tokens[head - 2] = Token::Number(operator.apply(lhs, rhs));
-                    head -= 1;
-                }
-                _ => unreachable!(),
-            },
-        }
+#[cfg(test)]
+mod tests {
+    use crate::{state::CalculatorState, process_input};
+
+    #[test]
+    fn test_empty_input_is_ok() {
+        assert_eq!(None, process_input(&mut CalculatorState::default(), "").unwrap());
     }
 
-    assert_eq!(1, head);
-
-    match tokens[0] {
-        Token::Number(value) => Ok(value),
-        _ => unreachable!(),
+    #[test]
+    fn test_direct_eval_works() {
+        let mut state = CalculatorState::default();
+        assert_eq!(Some(5.0), process_input(&mut state, "5").unwrap());
+        assert_eq!(Some(3.75), process_input(&mut state, "5 * -(2 + -3) / -4 + 5").unwrap());
     }
+
+    #[test]
+    fn test_invalid_input_reports_syntax_error() {
+        let mut state = CalculatorState::default();
+        assert!(process_input(&mut state, "()").is_err());
+    }
+
+    #[test]
+    fn test_variables_work() {
+        let mut state = CalculatorState::default();
+
+        assert!(process_input(&mut state, "variable").is_err());
+        assert_eq!(None, process_input(&mut state, "variable = 3.1415926535").unwrap());
+        assert_eq!(Some(3.1415926535), process_input(&mut state, "variable").unwrap());
+        assert!(process_input(&mut state, "variabl").is_err());
+        assert!(process_input(&mut state, "variables").is_err());
+
+        assert_eq!(None, process_input(&mut state, "variable=2").unwrap());
+        assert_eq!(Some(2.0), process_input(&mut state, "variable").unwrap());
+    }
+
+    #[test]
+    fn test_invalid_variable_declaration_syntax_errors() {
+        let mut state = CalculatorState::default();
+        assert!(process_input(&mut state, "= 5").is_err());
+        assert!(process_input(&mut state, "x =").is_err());
+        assert!(process_input(&mut state, "= 5").is_err());
+        assert!(process_input(&mut state, "x + = 5").is_err());
+        assert!(process_input(&mut state, "x = 5 +").is_err());
+        assert!(process_input(&mut state, "7est = 5").is_err()); // names can't start with numbers
+    }
+
+    #[test]
+    fn test_functions_work() {
+        let mut state = CalculatorState::default();
+
+        assert_eq!(None, process_input(&mut state, "f() = 5").unwrap());
+        assert_eq!(Some(5.0), process_input(&mut state, "f()").unwrap());
+
+        assert_eq!(None, process_input(&mut state, "f(x) = 5x").unwrap());
+        assert!(process_input(&mut state, "f()").is_err());
+        assert_eq!(Some(-25.0), process_input(&mut state, "f(-5)").unwrap());
+
+        assert_eq!(None, process_input(&mut state, "g(x, y) = f(x) / f(y)").unwrap());
+        assert_eq!(Some(-0.5), process_input(&mut state, "g(-2, 4)").unwrap());
+    }
+
+    #[test]
+    fn test_invalid_function_declaration_syntax_errors() {
+        let mut state = CalculatorState::default();
+        assert!(process_input(&mut state, "f(,) = 5").is_err());
+        assert!(process_input(&mut state, "f( = 5").is_err());
+        assert!(process_input(&mut state, "f() =").is_err());
+        assert!(process_input(&mut state, "f() + 5 = 5").is_err());
+        assert!(process_input(&mut state, "f(2x) = 5").is_err());
+        assert!(process_input(&mut state, "f(x) = 2x +").is_err());
+        assert!(process_input(&mut state, "f(a,,b) = a + b").is_err());
+        assert!(process_input(&mut state, "f(a,b,) = a + b").is_err());
+        assert!(process_input(&mut state, "f(a,) = a").is_err());
+        assert!(process_input(&mut state, "f(a b) = a + b").is_err());
+    }
+
 }
