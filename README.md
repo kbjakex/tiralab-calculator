@@ -6,9 +6,11 @@ A scientific calculator University project
 
 For the peer reviews: feel free to reach out for any questions or concerns or such on Discord - PM jetp250#8243 through [The Programmer's Hangout](https://discord.gg/programming).
 
+[User guide](https://github.com/kbjakex/tiralab-calculator/blob/main/documentation/user-guide.md)
+
 ### Project status
 
-The project is over halfway done. You can evaluate expressions such as `(2 - 3) / (4 - 5) * 13 + 4` and declare and use variables and functions. Input validation is quite good now and error messages more specific. The only major missing feature is unary operator support, but after that, all that remains to be done is add built-in constants/functions, improve error messages, add more operators and improve testing & code quality.
+The project is very nearly done. Direct evaluation, variables and functions work (see the user guide), input validation is at a good state, all intended operators are supported, code coverage is high, error messages are decent. Only built-in functions & constants remain to be added.
 
 ### Rust version
 
