@@ -1,6 +1,6 @@
-#![warn(clippy::all, clippy::cargo)]
+#![warn(clippy::all)]
 
-pub mod ast;
+pub mod operators;
 pub mod parser;
 pub mod state;
 
@@ -111,9 +111,9 @@ fn process_variable(variable_name: &str, rest: &str, state: &mut CalculatorState
     state
         .variables
         .entry(variable_name.to_owned())
-        .and_modify(|old_value| {
-            *old_value = value;
-            println!("{variable_name} changed from {} to {value}", *old_value);
+        .and_modify(|variable_value| {
+            let old_value = std::mem::replace(variable_value, value);
+            println!("{variable_name} changed from {} to {value}", old_value);
         })
         .or_insert_with(|| {
             println!("{variable_name} = {value}");
@@ -141,7 +141,7 @@ fn process_function(function_name: &str, tokens: TokenIterator<'_>, rest: &str, 
     Ok(())
 }
 
-fn parse_function_parameters<'a>(mut tokens: TokenIterator<'a>) -> anyhow::Result<Vec<&'a str>> {
+fn parse_function_parameters(mut tokens: TokenIterator<'_>) -> anyhow::Result<Vec<&str>> {
     let mut param_names = Vec::new();
     let mut expecting_identifier = true;
     let mut prev_token = None;
@@ -153,15 +153,15 @@ fn parse_function_parameters<'a>(mut tokens: TokenIterator<'a>) -> anyhow::Resul
                 ParserToken::Variable { name } => param_names.push(name),
                 ParserToken::Delimiter => {}
                 ParserToken::RightParen => break,
-                other => bail!("'{other:?}' not allowed in function declaration!"),
+                other => bail!("'{other}' not allowed in function declaration!"),
             }
 
             let is_identifier = matches!(next, ParserToken::Variable { .. });
             if expecting_identifier && !is_identifier {
-                bail!("Expected parameter name, got '{next:?}");
+                bail!("Expected parameter name, got '{next}");
             }
             if !expecting_identifier && is_identifier {
-                bail!("Expected `,` or `)`, got identifier '{next:?}'");
+                bail!("Expected `,` or `)`, got identifier '{next}'");
             }
             expecting_identifier = !is_identifier;
             prev_token = Some(next);
@@ -220,8 +220,8 @@ mod tests {
         let mut state = CalculatorState::default();
 
         assert!(process_input(&mut state, "variable").is_err());
-        assert_eq!(None, process_input(&mut state, "variable = 3.1415926535").unwrap());
-        assert_eq!(Some(3.1415926535), process_input(&mut state, "variable").unwrap());
+        assert_eq!(None, process_input(&mut state, "variable = 1.234567").unwrap());
+        assert_eq!(Some(1.234567), process_input(&mut state, "variable").unwrap());
         assert!(process_input(&mut state, "variabl").is_err());
         assert!(process_input(&mut state, "variables").is_err());
 

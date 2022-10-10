@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use bstr::BStr;
 
-use crate::ast::{BinaryOperator, UnaryOperator};
+use crate::operators::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
@@ -33,8 +33,8 @@ pub fn infix_to_postfix<'a>(tokens: impl Into<TokenIterator<'a>>) -> Result<Vec<
 
 /// The actual implementation. Separated for a nicer interface.
 fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
-    use crate::ast::BinaryOperator as BinOp;
-    use crate::ast::UnaryOperator as UnOp;
+    use crate::operators::BinaryOperator as BinOp;
+    use crate::operators::UnaryOperator as UnOp;
     use ParserToken::*;
 
     fn assert_value_is_valid_here(token: ParserToken, prev_token: Option<ParserToken>) -> anyhow::Result<()> {
@@ -50,7 +50,7 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
     let mut parameter_counts = Vec::new();
 
     let mut last_token = None;
-    while let Some(token) = tokens.next() {
+    for token in tokens.by_ref() {
         let token = token?; // Check for parsing errors
 
         match token {
@@ -354,7 +354,7 @@ impl<'a> TokenIterator<'a> {
                     return Ok(ParserToken::Variable { name });
                 }
 
-                bail!("Invalid token `{}` (at `{}`)", c as char, unsafe { std::mem::transmute::<&[u8], &str>(&self.source[self.index..])});
+                bail!("Invalid token `{}` (at `{}`)", c as char, unsafe { std::mem::transmute::<&BStr, &str>(&self.source[self.index..])});
             }
         };
 
@@ -386,7 +386,7 @@ impl<'a> From<&'a str> for TokenIterator<'a> {
 #[rustfmt::skip] // rustfmt keeps splitting the asserts which ends up actually hurting readability
 #[cfg(test)]
 mod tests {
-    use crate::{ast::BinaryOperator, ast::UnaryOperator, parser::Token};
+    use crate::{operators::BinaryOperator, operators::UnaryOperator, parser::Token};
 
     use super::infix_to_postfix;
 

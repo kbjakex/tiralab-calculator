@@ -4,7 +4,7 @@ use anyhow::bail;
 use bevy_utils::HashMap;
 
 use crate::{
-    ast::{BinaryOperator, UnaryOperator},
+    operators::{BinaryOperator, UnaryOperator},
     parser,
 };
 
@@ -124,6 +124,8 @@ impl Function {
 
                         stack.drain(stack.len() - parameter_count..);
                         stack.push(result);
+                    } else {
+                        bail!("Function '{name}' does not exist.");
                     }
                 }
                 Token::UnaryOperator(operator) => {
@@ -157,9 +159,9 @@ mod tests {
         params: &[&str],
         param_values: &[f64],
     ) -> f64 {
-        Function::from_name_and_expression("foo".into(), expression, params, &state)
+        Function::from_name_and_expression("foo".into(), expression, params, state)
             .unwrap()
-            .evaluate(&state, param_values)
+            .evaluate(state, param_values)
             .unwrap()
     }
 
@@ -209,6 +211,17 @@ mod tests {
             3.0 * 5.0 / 7.0,
             eval(&state, "f(x, y, z)", &["x", "y", "z"], &[3.0, 5.0, 7.0])
         );
+    }
+
+    #[test]
+    fn test_unknown_functions_error() {
+        let state = CalculatorState::default();
+
+        let result = Function::from_name_and_expression("foo".into(), "f(x)", &[], &state);
+        assert!(result.is_err());
+
+        let result = Function::from_name_and_expression("foo".into(), "g(x) + f(x, y)", &[], &state);
+        assert!(result.is_err());
     }
 
     #[test]
