@@ -28,7 +28,7 @@ this was not trivial! Here is some of what I ran into:
 * I have to also implement every built-in function for every built-in type. `sqrt()` is one of these, and although this is the first function I've implemented,
   I already ran into the aforementioned issues with rationals. Not looking forward to the rest of the functions.
 * I found issues with the existing code while testing this. Notably, declaring `f(a,b) = a < b` called with `f(-1, 1)` outputs `false`, but `f((-1), 1)` outputs `true`. 
-  I really hope this is a surface-level issue.
+  I really hope this is a surface-level issue. **Edit** @ 11.38 PM: Fixed.
 * The types provided by the library don't account for complex results out of the box. They do return NaN, but in any case, I have to myself make sure things like
   exponentiating negatives or taking even roots of negatives gives complex numbers rather than just "not a number". In hindsight, I'm unsure if introducing
   complex number support was ideal, but I'm too far in now.
@@ -39,7 +39,10 @@ Mostly, I hope I won't end up having to revert all of this, because this does ha
 are integers, I can also implement bitwise operators for example, and because the library lets me pick the precision at runtime for each value,
 I can in theory have the user enter the desired output precision. Assuming I do have time for that anyways.
 
-Time spent this week: roughly 10 hours.
+Time spent this week: roughly ~~10 hours~~ 12.5 hours.
+
+**Edit** @ 11.38 PM: Things are actually looking a lot better now, and I pushed a version that does work, I can't really find inputs that wouldn't 
+work right now. Still a lot to be implemented, though.
 
 ### Next steps
 
