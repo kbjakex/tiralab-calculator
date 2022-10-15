@@ -1,9 +1,9 @@
 #![warn(clippy::all)]
 
+mod builtins;
 pub mod operators;
 pub mod parser;
 pub mod state;
-mod builtins;
 
 use std::io::BufRead;
 
@@ -12,7 +12,7 @@ use parser::{infix_to_postfix, ParserToken, TokenIterator};
 use anyhow::{bail, Result};
 use state::{CalculatorState, Value};
 
-use crate::{parser::Token, state::Function, operators::rational_to_decimal};
+use crate::{operators::rational_to_decimal, parser::Token, state::Function};
 
 fn main() {
     let mut state = CalculatorState::default();
@@ -32,7 +32,7 @@ fn main() {
 
         match process_input(&mut state, &line) {
             Ok(Some(output)) => print_output_value(output),
-            Ok(None) => {},
+            Ok(None) => {}
             Err(e) => println!("{e}"),
         }
         println!();
@@ -50,7 +50,7 @@ fn print_output_value(value: Value) {
         Value::Rational(value) => {
             if value.is_integer() {
                 use std::fmt::Write;
-                
+
                 let mut formatted = String::new();
                 write!(&mut formatted, "{value}").unwrap();
 
@@ -67,14 +67,16 @@ fn print_output_value(value: Value) {
                 }
                 println!("≈ {}", rational_to_decimal(&value, 128));
             }
-        },
+        }
         Value::Complex(value) => {
             let (real, imag) = value.into_real_imag();
             match (&real == &0, &imag == &0) {
                 (true, true) => println!("0"),
                 (true, false) => println!("{}i", float_to_string(&imag)),
                 (false, true) => println!("{}", float_to_string(&real)),
-                (false, false) => println!("{} + {}i", float_to_string(&real), float_to_string(&imag)),
+                (false, false) => {
+                    println!("{} + {}i", float_to_string(&real), float_to_string(&imag))
+                }
             }
         }
 
@@ -104,7 +106,11 @@ fn process_input(state: &mut CalculatorState, input: &str) -> Result<Option<Valu
     }
 
     if let Some((start, rest)) = input.split_once('=') {
-        let last = start.as_bytes()[start.len() - 1];
+        let last = start
+            .as_bytes()
+            .get(start.len().saturating_sub(1))
+            .copied()
+            .unwrap_or(b' ');
         if !rest.starts_with("=") && ![b'!', b'<', b'>'].contains(&last) {
             process_variable_or_function(state, start.trim(), rest.trim())?;
             return Ok(None);
@@ -152,7 +158,11 @@ fn process_variable_or_function(
     Ok(())
 }
 
-fn process_variable(variable_name: &str, rest: &str, state: &mut CalculatorState) -> anyhow::Result<()> {
+fn process_variable(
+    variable_name: &str,
+    rest: &str,
+    state: &mut CalculatorState,
+) -> anyhow::Result<()> {
     if rest.is_empty() {
         bail!("Value (after `=`) can't be empty");
     }
@@ -166,7 +176,10 @@ fn process_variable(variable_name: &str, rest: &str, state: &mut CalculatorState
 
     let old = state.variables.insert(variable_name.to_owned(), value);
     if let Some(old_value) = old {
-        println!("{variable_name} changed from {old_value} to {}", state.variables[variable_name]);
+        println!(
+            "{variable_name} changed from {old_value} to {}",
+            state.variables[variable_name]
+        );
     } else {
         println!("{variable_name} = {}", state.variables[variable_name]);
     }
@@ -174,17 +187,26 @@ fn process_variable(variable_name: &str, rest: &str, state: &mut CalculatorState
     Ok(())
 }
 
-fn process_function(function_name: &str, tokens: TokenIterator<'_>, rest: &str, state: &mut CalculatorState) -> anyhow::Result<()> {
+fn process_function(
+    function_name: &str,
+    tokens: TokenIterator<'_>,
+    rest: &str,
+    state: &mut CalculatorState,
+) -> anyhow::Result<()> {
     if rest.is_empty() {
         bail!("Value (after `=`) can't be empty");
     }
 
-    let parameters = parse_function_parameters(tokens)?;    
+    let parameters = parse_function_parameters(tokens)?;
 
     let function =
         Function::from_name_and_expression(function_name.into(), rest, &parameters, state)?;
 
-    if state.functions.insert(function_name.into(), function).is_some() {
+    if state
+        .functions
+        .insert(function_name.into(), function)
+        .is_some()
+    {
         println!("Updated function '{function_name}'");
     } else {
         println!("Defined function '{function_name}'!");
@@ -244,20 +266,29 @@ fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<Value> 
     function.evaluate(state, &[], 128) // TODO: don't hard-code precision
 }
 
-/* #[cfg(test)]
+#[cfg(test)]
 mod tests {
-    use crate::{state::CalculatorState, process_input};
+    use crate::{
+        process_input,
+        state::{CalculatorState, Value},
+    };
 
     #[test]
     fn test_empty_input_is_ok() {
-        assert_eq!(None, process_input(&mut CalculatorState::default(), "").unwrap());
+        assert_eq!(
+            None,
+            process_input(&mut CalculatorState::default(), "").unwrap()
+        );
     }
 
     #[test]
     fn test_direct_eval_works() {
         let mut state = CalculatorState::default();
-        assert_eq!(Some(5.0), process_input(&mut state, "5").unwrap());
-        assert_eq!(Some(3.75), process_input(&mut state, "5 * -(2 + -3) / -4 + 5").unwrap());
+        assert_eq!(Some(val(5.0)), process_input(&mut state, "5").unwrap());
+        assert_eq!(
+            Some(val(3.75)),
+            process_input(&mut state, "5 * -(2 + -3) / -4 + 5").unwrap()
+        );
     }
 
     #[test]
@@ -271,13 +302,22 @@ mod tests {
         let mut state = CalculatorState::default();
 
         assert!(process_input(&mut state, "variable").is_err());
-        assert_eq!(None, process_input(&mut state, "variable = 1.234567").unwrap());
-        assert_eq!(Some(1.234567), process_input(&mut state, "variable").unwrap());
+        assert_eq!(
+            None,
+            process_input(&mut state, "variable = 1.234567").unwrap()
+        );
+        assert_eq!(
+            Some(Value::rational(1234567, 1000000)),
+            process_input(&mut state, "variable").unwrap()
+        );
         assert!(process_input(&mut state, "variabl").is_err());
         assert!(process_input(&mut state, "variables").is_err());
 
         assert_eq!(None, process_input(&mut state, "variable=2").unwrap());
-        assert_eq!(Some(2.0), process_input(&mut state, "variable").unwrap());
+        assert_eq!(
+            Some(val(2.0)),
+            process_input(&mut state, "variable").unwrap()
+        );
     }
 
     #[test]
@@ -296,14 +336,23 @@ mod tests {
         let mut state = CalculatorState::default();
 
         assert_eq!(None, process_input(&mut state, "f() = 5").unwrap());
-        assert_eq!(Some(5.0), process_input(&mut state, "f()").unwrap());
+        assert_eq!(Some(val(5.0)), process_input(&mut state, "f()").unwrap());
 
         assert_eq!(None, process_input(&mut state, "f(x) = 5x").unwrap());
         assert!(process_input(&mut state, "f()").is_err());
-        assert_eq!(Some(-25.0), process_input(&mut state, "f(-5)").unwrap());
+        assert_eq!(
+            Some(val(-25.0)),
+            process_input(&mut state, "f(-5)").unwrap()
+        );
 
-        assert_eq!(None, process_input(&mut state, "g(x, y) = f(x) / f(y)").unwrap());
-        assert_eq!(Some(-0.5), process_input(&mut state, "g(-2, 4)").unwrap());
+        assert_eq!(
+            None,
+            process_input(&mut state, "g(x, y) = f(x) / f(y)").unwrap()
+        );
+        assert_eq!(
+            Some(val(-0.5)),
+            process_input(&mut state, "g(-2, 4)").unwrap()
+        );
     }
 
     #[test]
@@ -321,4 +370,10 @@ mod tests {
         assert!(process_input(&mut state, "f(a b) = a + b").is_err());
     }
 
-} */
+    // Convenience method to construct rationals for the tests
+    fn val(x: f64) -> Value {
+        let mut value = rug::Rational::new();
+        value.assign_f64(x).unwrap();
+        Value::Rational(value)
+    }
+}

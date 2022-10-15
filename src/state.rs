@@ -4,8 +4,9 @@ use anyhow::bail;
 use bevy_utils::HashMap;
 
 use crate::{
+    builtins,
     operators::{BinaryOperator, UnaryOperator},
-    parser, builtins,
+    parser,
 };
 
 #[derive(Default)]
@@ -19,7 +20,7 @@ pub enum Value {
     Decimal(rug::Float),
     Rational(rug::Rational),
     Complex(rug::Complex),
-    Boolean(bool)
+    Boolean(bool),
 }
 
 impl std::fmt::Display for Value {
@@ -28,12 +29,17 @@ impl std::fmt::Display for Value {
             Value::Decimal(value) => value.fmt(f),
             Value::Rational(value) => value.fmt(f),
             Value::Complex(value) => value.fmt(f),
-            Value::Boolean(value) => value.fmt(f)
+            Value::Boolean(value) => value.fmt(f),
         }
     }
 }
 
 impl Value {
+    // Convenience function for construction
+    pub fn rational(numerator: i32, denominator: u32) -> Value {
+        Value::Rational(rug::Rational::from((numerator, denominator)))
+    }
+
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::Decimal(_) => "decimal",
@@ -50,7 +56,7 @@ pub enum BuiltInFunction {
     Cbrt,
     Sin,
     Cos,
-    Tan
+    Tan,
 }
 
 impl BuiltInFunction {
@@ -61,7 +67,7 @@ impl BuiltInFunction {
             "sin" => Self::Sin,
             "cos" => Self::Cos,
             "tan" => Self::Tan,
-            _ => return None
+            _ => return None,
         };
 
         Some(result)
@@ -69,7 +75,7 @@ impl BuiltInFunction {
 
     pub const fn parameter_count(self) -> usize {
         match self {
-            _ => 1
+            _ => 1,
         }
     }
 
@@ -138,9 +144,9 @@ impl Function {
                     {
                         // reverse the index, because with shunting yard, the parameters end up being in the wrong order
                         resolved.push(Token::Parameter { index });
-                    } else  if let Some(value) = state.variables.get(name) {
+                    } else if let Some(value) = state.variables.get(name) {
                         resolved.push(Token::Constant(value.clone()));
-                    }  else {
+                    } else {
                         bail!("Unknown variable '{name}'");
                     }
                 }
@@ -153,6 +159,11 @@ impl Function {
                     }
 
                     if let Some(fn_type) = BuiltInFunction::from_name(called_fn_name) {
+                        let expected_param_count = fn_type.parameter_count();
+                        if parameter_count as usize != expected_param_count {
+                            bail!("Function '{called_fn_name}' takes {expected_param_count} parameters, {parameter_count} were given");
+                        }
+
                         resolved.push(Token::BuiltInFunctionCall(fn_type));
                         continue;
                     }
@@ -178,7 +189,12 @@ impl Function {
         })
     }
 
-    pub fn evaluate(&self, state: &CalculatorState, parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
+    pub fn evaluate(
+        &self,
+        state: &CalculatorState,
+        parameters: &[Value],
+        precision_bits: u32,
+    ) -> anyhow::Result<Value> {
         if self.parameter_count != parameters.len() as u32 {
             bail!(
                 "Function '{}' takes {} parameters, {} were given",
@@ -238,7 +254,7 @@ impl Function {
     }
 }
 
-/* #[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::{CalculatorState, Function, Value};
 
@@ -254,29 +270,40 @@ mod tests {
             .unwrap()
     }
 
+    fn val(numerator: i32, denominator: u32) -> Value {
+        Value::rational(numerator, denominator)
+    }
+
     #[test]
     fn test_simple_evaluates_correctly() {
         let state = CalculatorState::default();
-        assert_eq!(1.0 / 6.0, eval(&state, "1.0 / 6.0", &[], &[]));
-        assert_eq!(2.5, eval(&state, "(x + 3) / 2", &["x"], &[2.0]));
-        assert_eq!(-1.0, eval(&state, "x - y", &["x", "y"], &[1.0, 2.0]));
+        assert_eq!(val(1, 6), eval(&state, "1.0 / 6.0", &[], &[]));
+        assert_eq!(val(5, 2), eval(&state, "(x + 3) / 2", &["x"], &[val(2, 1)]));
         assert_eq!(
-            -3.0,
-            eval(&state, "(x - y) / (x + y)", &["x", "y"], &[1.0, -2.0])
+            val(-1, 1),
+            eval(&state, "x - y", &["x", "y"], &[val(1, 1), val(2, 1)])
+        );
+        assert_eq!(
+            val(-3, 1),
+            eval(
+                &state,
+                "(x - y) / (x + y)",
+                &["x", "y"],
+                &[val(1, 1), val(-2, 1)]
+            )
         );
     }
 
     #[test]
     fn test_variable_references_work() {
         let mut state = CalculatorState::default();
-        state.variables.insert("mypi".into(), std::f64::consts::PI);
-        state.variables.insert("foo".into(), -100.0);
+        state
+            .variables
+            .insert("mypi".into(), val(31415926, 10000000));
+        state.variables.insert("foo".into(), val(-100, 1));
 
-        assert_eq!(
-            std::f64::consts::PI / -100.0,
-            eval(&state, "mypi / foo", &[], &[])
-        );
-        assert_eq!(0.0, eval(&state, "foo + x", &["x"], &[100.0]));
+        assert_eq!(val(-31415926, 1000000000), eval(&state, "mypi / foo", &[], &[]));
+        assert_eq!(val(0, 1), eval(&state, "foo + x", &["x"], &[val(100, 1)]));
     }
 
     #[test]
@@ -295,10 +322,15 @@ mod tests {
                 .unwrap();
         state.functions.insert("f".into(), test_fn);
 
-        assert_eq!(3.0 * 5.0 / 7.0, eval(&state, "f(3, 5, 7)", &[], &[]));
+        assert_eq!(val(3 * 5, 7), eval(&state, "f(3, 5, 7)", &[], &[]));
         assert_eq!(
-            3.0 * 5.0 / 7.0,
-            eval(&state, "f(x, y, z)", &["x", "y", "z"], &[3.0, 5.0, 7.0])
+            val(3 * 5, 7),
+            eval(
+                &state,
+                "f(x, y, z)",
+                &["x", "y", "z"],
+                &[val(3, 1), val(5, 1), val(7, 1)]
+            )
         );
     }
 
@@ -309,7 +341,8 @@ mod tests {
         let result = Function::from_name_and_expression("foo".into(), "f(x)", &[], &state);
         assert!(result.is_err());
 
-        let result = Function::from_name_and_expression("foo".into(), "g(x) + f(x, y)", &[], &state);
+        let result =
+            Function::from_name_and_expression("foo".into(), "g(x) + f(x, y)", &[], &state);
         assert!(result.is_err());
     }
 
@@ -320,10 +353,13 @@ mod tests {
             Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state)
                 .unwrap();
 
-        assert!(test_fn.evaluate(&state, &[]).is_err());
-        assert!(test_fn.evaluate(&state, &[1.0]).is_err());
-        assert!(test_fn.evaluate(&state, &[1.0, 2.0]).is_err());
-        assert!(test_fn.evaluate(&state, &[1.0, 2.0, 3.0]).is_ok());
+        assert!(test_fn.evaluate(&state, &[], 128).is_err());
+        assert!(test_fn.evaluate(&state, &[val(1, 1)], 128).is_err());
+        assert!(test_fn
+            .evaluate(&state, &[val(1, 1), val(2, 1)], 128)
+            .is_err());
+        assert!(test_fn
+            .evaluate(&state, &[val(1, 1), val(2, 1), val(3, 1)], 128)
+            .is_ok());
     }
 }
- */

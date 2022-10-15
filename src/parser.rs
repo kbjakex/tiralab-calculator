@@ -405,6 +405,7 @@ impl<'a> TokenIterator<'a> {
             (b'-', _) => (ParserToken::BinaryOperator(BinaryOperator::Subtract), 1),
             (b'*', _) => (ParserToken::BinaryOperator(BinaryOperator::Multiply), 1),
             (b'/', _) => (ParserToken::BinaryOperator(BinaryOperator::Divide), 1),
+            (b'%', _) => (ParserToken::BinaryOperator(BinaryOperator::Remainder), 1),
             (b'^', _) => (ParserToken::BinaryOperator(BinaryOperator::Power), 1),
             (b',', _) => (ParserToken::Delimiter, 1),
             (b'|', Some(b'|')) => (ParserToken::BinaryOperator(BinaryOperator::LogicalOr), 2),
