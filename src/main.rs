@@ -3,28 +3,22 @@
 pub mod operators;
 pub mod parser;
 pub mod state;
+mod builtins;
 
-use std::io::{self, BufRead, Write};
+use std::io::BufRead;
 
 use parser::{infix_to_postfix, ParserToken, TokenIterator};
 
 use anyhow::{bail, Result};
-use state::CalculatorState;
+use state::{CalculatorState, Value};
 
-use crate::{parser::Token, state::Function};
-
-fn print_input_expected_marker() {
-    print!("> ");
-    // A flush is needed because output is buffered, and the '>' would
-    // otherwise be printed when the next println!() occurs.
-    io::stdout().flush().unwrap();
-}
+use crate::{parser::Token, state::Function, operators::rational_to_decimal};
 
 fn main() {
     let mut state = CalculatorState::default();
 
     // A simple REPL (read-eval-print-loop) interface
-    print_input_expected_marker();
+    //print_input_expected_marker();
     for line in std::io::stdin().lock().lines() {
         if line.is_err() {
             return; // No more input
@@ -37,12 +31,64 @@ fn main() {
         }
 
         match process_input(&mut state, &line) {
-            Ok(Some(output)) => println!("{output}"),
+            Ok(Some(output)) => print_output_value(output),
             Ok(None) => {},
             Err(e) => println!("{e}"),
         }
+        println!();
 
-        print_input_expected_marker();
+        //print_input_expected_marker();
+    }
+}
+
+fn print_output_value(value: Value) {
+    print!("= ");
+    match value {
+        Value::Decimal(value) => {
+            println!("{}", float_to_string(&value));
+        }
+        Value::Rational(value) => {
+            if value.is_integer() {
+                use std::fmt::Write;
+                
+                let mut formatted = String::new();
+                write!(&mut formatted, "{value}").unwrap();
+
+                if formatted.len() >= 10 {
+                    println!("{formatted} ({} digits)", formatted.len());
+                } else {
+                    println!("{formatted}")
+                }
+            } else {
+                let (fract, floor) = value.clone().fract_floor(rug::Integer::new());
+                println!("{value}");
+                if floor != 0 {
+                    println!("= {floor} + {fract}");
+                }
+                println!("≈ {}", rational_to_decimal(&value, 128));
+            }
+        },
+        Value::Complex(value) => {
+            let (real, imag) = value.into_real_imag();
+            match (&real == &0, &imag == &0) {
+                (true, true) => println!("0"),
+                (true, false) => println!("{}i", float_to_string(&imag)),
+                (false, true) => println!("{}", float_to_string(&real)),
+                (false, false) => println!("{} + {}i", float_to_string(&real), float_to_string(&imag)),
+            }
+        }
+
+        Value::Boolean(value) => {
+            println!("{value}");
+        }
+    }
+}
+
+fn float_to_string(float: &rug::Float) -> String {
+    if float.is_integer() {
+        float.to_integer().unwrap().to_string_radix(10)
+    } else {
+        float.to_string_radix(10, None)
     }
 }
 
@@ -52,19 +98,24 @@ fn main() {
 /// # Errors
 /// If the input string was not syntactically valid, an error describing the
 /// problem is returned.
-fn process_input(state: &mut CalculatorState, input: &str) -> Result<Option<f64>> {
+fn process_input(state: &mut CalculatorState, input: &str) -> Result<Option<Value>> {
     if input.is_empty() {
         return Ok(None);
     }
 
     if let Some((start, rest)) = input.split_once('=') {
-        process_variable_or_function(state, start.trim(), rest.trim())?;
-        return Ok(None);
+        let last = start.as_bytes()[start.len() - 1];
+        if !rest.starts_with("=") && ![b'!', b'<', b'>'].contains(&last) {
+            process_variable_or_function(state, start.trim(), rest.trim())?;
+            return Ok(None);
+        }
     }
 
     // Neither a variable nor a function, so simply evaluate
     let mut postfix = parser::infix_to_postfix(input)?;
     let result = eval_postfix(&mut postfix, state)?;
+
+    state.variables.insert("ans".to_owned(), result.clone());
 
     Ok(Some(result))
 }
@@ -79,7 +130,7 @@ fn process_variable_or_function(
     if start.is_empty() {
         bail!("Syntax error: can't start with a `=`");
     }
-    let mut tokens = TokenIterator::of(start);
+    let mut tokens = TokenIterator::of(start, 128);
 
     // 1. Variable and function should both begin with what is a valid variable name
     let identifier_token = tokens.next().unwrap()?;
@@ -106,19 +157,19 @@ fn process_variable(variable_name: &str, rest: &str, state: &mut CalculatorState
         bail!("Value (after `=`) can't be empty");
     }
 
+    if variable_name == "ans" {
+        bail!("'ans' is a reserved variable name, please choose another");
+    }
+
     let mut value_tokens = infix_to_postfix(rest)?;
     let value = eval_postfix(&mut value_tokens, state)?;
-    state
-        .variables
-        .entry(variable_name.to_owned())
-        .and_modify(|variable_value| {
-            let old_value = std::mem::replace(variable_value, value);
-            println!("{variable_name} changed from {} to {value}", old_value);
-        })
-        .or_insert_with(|| {
-            println!("{variable_name} = {value}");
-            value
-        });
+
+    let old = state.variables.insert(variable_name.to_owned(), value);
+    if let Some(old_value) = old {
+        println!("{variable_name} changed from {old_value} to {}", state.variables[variable_name]);
+    } else {
+        println!("{variable_name} = {}", state.variables[variable_name]);
+    }
 
     Ok(())
 }
@@ -187,13 +238,13 @@ fn parse_function_parameters(mut tokens: TokenIterator<'_>) -> anyhow::Result<Ve
 /// The function assumes `tokens` as a whole represents a valid postfix expression.
 /// # Errors
 /// Should an error occur, a human-readable message describing the issue is returned.
-fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<f64> {
+fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> Result<Value> {
     // Re-use evaluation implemented for functions
     let function = Function::from_name_and_tokens("".into(), tokens, &[], state)?;
-    function.evaluate(state, &[])
+    function.evaluate(state, &[], 128) // TODO: don't hard-code precision
 }
 
-#[cfg(test)]
+/* #[cfg(test)]
 mod tests {
     use crate::{state::CalculatorState, process_input};
 
@@ -270,4 +321,4 @@ mod tests {
         assert!(process_input(&mut state, "f(a b) = a + b").is_err());
     }
 
-}
+} */

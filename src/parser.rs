@@ -1,11 +1,12 @@
-use anyhow::{anyhow, bail, Result};
-use bstr::BStr;
+use anyhow::{bail, Result};
+use bstr::{BStr, ByteSlice};
+use rug::{Assign, ops::PowAssign};
 
-use crate::operators::{BinaryOperator, UnaryOperator};
+use crate::{operators::{BinaryOperator, UnaryOperator}, state::Value};
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
-    Number(f64),
+    Number(Value),
     Variable { name: &'a str },
     Function { name: &'a str, parameter_count: u32 },
     BinaryOperator(BinaryOperator),
@@ -37,9 +38,9 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
     use crate::operators::UnaryOperator as UnOp;
     use ParserToken::*;
 
-    fn assert_value_is_valid_here(token: ParserToken, prev_token: Option<ParserToken>) -> anyhow::Result<()> {
+    fn assert_value_is_valid_here(token: &ParserToken, prev_token: &Option<ParserToken>) -> anyhow::Result<()> {
         if !matches!(prev_token, None | Some(Delimiter | LeftParen | UnaryOperator(..) | BinaryOperator(..))) {
-            bail!("A value (`{token}`) is not valid after `{}`", prev_token.unwrap());
+            bail!("A value (`{token}`) is not valid after `{}`", prev_token.as_ref().unwrap());
         }
         Ok(())
     }
@@ -54,16 +55,16 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
         let token = token?; // Check for parsing errors
 
         match token {
-            Number(value) => {
-                assert_value_is_valid_here(token, last_token)?;
-                output.push(Token::Number(value));
+            Number(ref value) => {
+                assert_value_is_valid_here(&token, &last_token)?;
+                output.push(Token::Number(value.clone()));
             }
             Variable { name } => {
-                assert_value_is_valid_here(token, last_token)?;
+                assert_value_is_valid_here(&token, &last_token)?;
                 output.push(Token::Variable { name });
             }
             Function { name } => {
-                assert_value_is_valid_here(token, last_token)?;
+                assert_value_is_valid_here(&token, &last_token)?;
                 operators.push(Function { name });
                 parameter_counts.push(0);
             }
@@ -170,8 +171,16 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
                     bail!("`,` outside of a function call");
                 }
 
-                while let Some(&BinaryOperator(top_of_stack)) = operators.last() {
-                    output.push(Token::BinaryOperator(top_of_stack));
+                loop {
+                    match operators.last() {
+                        Some(&BinaryOperator(top_of_stack)) => {
+                            output.push(Token::BinaryOperator(top_of_stack));
+                        },
+                        Some(&UnaryOperator(top_of_stack)) => {
+                            output.push(Token::UnaryOperator(top_of_stack));
+                        }
+                        _ => break
+                    }
                     operators.pop();
                 }
             }
@@ -197,8 +206,13 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
 /// Last step in the shunting-yard algorithm: pop nodes from operator stack into the output
 /// until a left paren ('(') is found. The function does not pop the left paren.
 fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<Token<'a>>) {
-    while let Some(top) = operators.last() {
-        match *top {
+    loop {
+        let top = match operators.last() {
+            None | Some(ParserToken::LeftParen) => return,
+            _ => operators.pop().unwrap()
+        };
+
+        match top {
             ParserToken::Number(value) => output.push(Token::Number(value)),
             ParserToken::Variable { name } => output.push(Token::Variable { name }),
             ParserToken::Function { name } => output.push(Token::Function {
@@ -211,14 +225,13 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
             ParserToken::Delimiter => unreachable!("operators never contains delimiters"),
             ParserToken::LeftParen => return,
         }
-        operators.pop();
     }
 }
 
 /// Represents a token internal to the parser.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub enum ParserToken<'a> {
-    Number(f64),
+    Number(Value),
     Variable { name: &'a str },
     Function { name: &'a str },
     Delimiter,
@@ -231,7 +244,7 @@ pub enum ParserToken<'a> {
 impl std::fmt::Display for ParserToken<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            ParserToken::Number(x) => write!(f, "{x}"),
+            ParserToken::Number(ref x) => write!(f, "{x}"),
             ParserToken::Variable { name } => f.write_str(name),
             ParserToken::Function { name } => f.write_str(name),
             ParserToken::Delimiter => f.write_str(","),
@@ -242,6 +255,15 @@ impl std::fmt::Display for ParserToken<'_> {
                 BinaryOperator::Divide => f.write_str("/"),
                 BinaryOperator::Remainder => f.write_str("%"),
                 BinaryOperator::Power => f.write_str("^"),
+                BinaryOperator::LessThan => f.write_str("<"),
+                BinaryOperator::LequalTo => f.write_str("<="),
+                BinaryOperator::GreaterThan => f.write_str(">"),
+                BinaryOperator::GequalTo => f.write_str(">="),
+                BinaryOperator::EqualTo => f.write_str("=="),
+                BinaryOperator::NequalTo => f.write_str("!="),
+                BinaryOperator::LogicalAnd => f.write_str("&&"),
+                BinaryOperator::LogicalOr => f.write_str("||"),
+                
             },
             ParserToken::UnaryOperator(op) => match op {
                 UnaryOperator::Negate => f.write_str("-"),
@@ -256,15 +278,17 @@ pub struct TokenIterator<'a> {
     source: &'a BStr,
     index: usize, // Current position in `source`
     last_was_number: bool,
+    precision_bits: u32,
 }
 
 impl<'a> TokenIterator<'a> {
     /// Creates a new iterator over the tokens in the source string.
-    pub fn of(source: &'a str) -> Self {
+    pub fn of(source: &'a str, precision_bits: u32) -> Self {
         Self {
             source: source.into(), // Guaranteed to be free and infallible
             index: 0,
             last_was_number: false,
+            precision_bits
         }
     }
 
@@ -278,7 +302,7 @@ impl<'a> TokenIterator<'a> {
     /// Greedily reads (consumes) all consecutive digits and periods, attempts
     /// to parse them as a number, and leaves `self.index` pointing to the first
     /// excluded character.
-    fn read_number(&mut self) -> Result<f64> {
+    fn read_number(&mut self) -> Result<Value> {
         let end_index = self
             .source
             .iter()
@@ -286,16 +310,60 @@ impl<'a> TokenIterator<'a> {
             .position(|&c| !c.is_ascii_digit() && c != b'.')
             .map_or(self.source.len(), |i| i + self.index);
 
-        let byte_str = &self.source[self.index..end_index];
+        let mut byte_str = &self.source[self.index..end_index];
+        if end_index > 1 && self.source[end_index - 1] == b'.' {
+            byte_str = &byte_str[..byte_str.len() - 1]; // Exclude decimal point if it's last, i.e `123.` 
+        }
+        let period_index = byte_str.find_char('.');
+
         // SAFETY: this is safe, because byte_str can necessarily only contain ascii digits or an ascii dot,
         // and ascii is valid UTF-8. Both types have the same representation. Empty source is also fine.
         let str_slice: &str = unsafe { std::mem::transmute(byte_str) };
 
         self.index = end_index;
+        self.last_was_number = true;
 
-        str_slice
-            .parse()
-            .map_err(|_| anyhow!("Invalid number: '{str_slice}'"))
+        if let Some(b'i') = self.source.get(self.index) {
+            self.last_was_number = false; // don't allow a variable directly after the 'i'
+            self.index += 1;
+            
+            // Imaginary unit
+            let mut value = rug::Complex::new(self.precision_bits);
+            value.assign((rug::Float::new(self.precision_bits), rug::Float::parse(str_slice)?));
+            return Ok(Value::Complex(value));
+        }
+
+        if let Some(index) = period_index {
+            // All inputs entered in the form `<whole part>.<fract part>` are necessary not irrational, so
+            // might as well parse them as exact rationals by parsing `123.456` as `123456/1000` and letting
+            // the library canonicalize it.
+
+            let whole_part_str = &str_slice[..index];
+            let fract_part_str = &str_slice[index+1..];
+
+            let mut whole_part = rug::Integer::new();
+            whole_part.assign(rug::Integer::parse(whole_part_str)?);
+
+            let mut fract_part = rug::Integer::new();
+            fract_part.assign(rug::Integer::parse(fract_part_str)?);
+
+            let mut denominator = rug::Integer::new();
+            denominator.assign(10);
+            denominator.pow_assign(u32::try_from(fract_part_str.len())?);
+
+            whole_part *= &denominator;
+            whole_part += fract_part;
+
+            let rational = rug::Rational::from((whole_part, denominator));
+
+            return Ok(Value::Rational(rational));
+        }
+
+        let res = rug::Rational::parse(str_slice)?;
+        let mut value = rug::Rational::new();
+        value.assign(res);
+
+        Ok(Value::Rational(value))
     }
 
     /// Similar to `read_number`. Identifiers are of the form
@@ -305,7 +373,7 @@ impl<'a> TokenIterator<'a> {
             .source
             .iter()
             .skip(self.index)
-            .position(|c| !matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9'))
+            .position(|c| !matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))
             .map_or(self.source.len(), |i| i + self.index);
 
         let byte_str = &self.source[self.index..end_index];
@@ -330,19 +398,26 @@ impl<'a> TokenIterator<'a> {
             return Ok(ParserToken::BinaryOperator(BinaryOperator::Multiply));
         }
 
-        let result = match self.source[self.index] {
-            b'(' => ParserToken::LeftParen,
-            b')' => ParserToken::RightParen,
-            b'+' => ParserToken::BinaryOperator(BinaryOperator::Add),
-            b'-' => ParserToken::BinaryOperator(BinaryOperator::Subtract),
-            b'*' => ParserToken::BinaryOperator(BinaryOperator::Multiply),
-            b'/' => ParserToken::BinaryOperator(BinaryOperator::Divide),
-            b'^' => ParserToken::BinaryOperator(BinaryOperator::Power),
-            b',' => ParserToken::Delimiter,
+        let (result, advance) = match (self.source[self.index], self.source.get(self.index + 1)) {
+            (b'(', _) => (ParserToken::LeftParen, 1),
+            (b')', _) => (ParserToken::RightParen, 1),
+            (b'+', _) => (ParserToken::BinaryOperator(BinaryOperator::Add), 1),
+            (b'-', _) => (ParserToken::BinaryOperator(BinaryOperator::Subtract), 1),
+            (b'*', _) => (ParserToken::BinaryOperator(BinaryOperator::Multiply), 1),
+            (b'/', _) => (ParserToken::BinaryOperator(BinaryOperator::Divide), 1),
+            (b'^', _) => (ParserToken::BinaryOperator(BinaryOperator::Power), 1),
+            (b',', _) => (ParserToken::Delimiter, 1),
+            (b'|', Some(b'|')) => (ParserToken::BinaryOperator(BinaryOperator::LogicalOr), 2),
+            (b'&', Some(b'&')) => (ParserToken::BinaryOperator(BinaryOperator::LogicalAnd), 2),
+            (b'<', Some(b'=')) => (ParserToken::BinaryOperator(BinaryOperator::LequalTo), 2),
+            (b'>', Some(b'=')) => (ParserToken::BinaryOperator(BinaryOperator::GequalTo), 2),
+            (b'=', Some(b'=')) => (ParserToken::BinaryOperator(BinaryOperator::EqualTo), 2),
+            (b'!', Some(b'=')) => (ParserToken::BinaryOperator(BinaryOperator::NequalTo), 2),
+            (b'<', _) => (ParserToken::BinaryOperator(BinaryOperator::LessThan), 1),
+            (b'>', _) => (ParserToken::BinaryOperator(BinaryOperator::GreaterThan), 1),
 
-            c => {
+            (c, _) => {
                 if c.is_ascii_digit() {
-                    self.last_was_number = true;
                     return Ok(ParserToken::Number(self.read_number()?));
                 }
                 if c.is_ascii_alphabetic() {
@@ -358,7 +433,7 @@ impl<'a> TokenIterator<'a> {
             }
         };
 
-        self.index += 1;
+        self.index += advance;
         Ok(result)
     }
 }
@@ -379,14 +454,14 @@ impl<'a> Iterator for TokenIterator<'a> {
 
 impl<'a> From<&'a str> for TokenIterator<'a> {
     fn from(source: &'a str) -> Self {
-        Self::of(source)
+        Self::of(source, 128)
     }
 }
 
 #[rustfmt::skip] // rustfmt keeps splitting the asserts which ends up actually hurting readability
 #[cfg(test)]
 mod tests {
-    use crate::{operators::BinaryOperator, operators::UnaryOperator, parser::Token};
+    use crate::{operators::BinaryOperator, operators::UnaryOperator, parser::Token, state::Value};
 
     use super::infix_to_postfix;
 
@@ -400,7 +475,7 @@ mod tests {
         (^) => {Token::BinaryOperator(BinaryOperator::Power)};
         (%) => {Token::BinaryOperator(BinaryOperator::Remainder)};
         (~) => {Token::UnaryOperator(UnaryOperator::Negate)};
-        ($lit:literal) => {Token::Number($lit as f64) };
+        ($lit:literal) => {Token::Number(Value::Rational(rug::Rational::from($lit))) };
         ($name:ident) => (Token::Variable{ name: stringify!($name) });
         // Loop over space-separated input tokens, parse them with the token! macro, and build
         // a vector out of them.
