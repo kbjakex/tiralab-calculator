@@ -4,7 +4,7 @@ use anyhow::bail;
 use bevy_utils::HashMap;
 
 use crate::{
-    builtins,
+    builtins::{self, BuiltInFunction},
     operators::{BinaryOperator, UnaryOperator},
     parser,
 };
@@ -82,47 +82,6 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum BuiltInFunction {
-    Sqrt,
-    Cbrt,
-    Sin,
-    Cos,
-    Tan,
-}
-
-impl BuiltInFunction {
-    pub fn from_name(name: &str) -> Option<Self> {
-        let result = match name {
-            "sqrt" => Self::Sqrt,
-            "cbrt" => Self::Cbrt,
-            "sin" => Self::Sin,
-            "cos" => Self::Cos,
-            "tan" => Self::Tan,
-            _ => return None,
-        };
-
-        Some(result)
-    }
-
-    pub const fn parameter_count(self) -> usize {
-        match self {
-            _ => 1,
-        }
-    }
-
-    pub fn evaluate(self, parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
-        use BuiltInFunction::*;
-        match self {
-            Sqrt => builtins::sqrt(parameters, precision_bits),
-            Cbrt => todo!(),
-            Sin => todo!(),
-            Cos => todo!(),
-            Tan => todo!(),
-        }
-    }
-}
-
 #[derive(Debug)]
 enum Token {
     Constant(Value),
@@ -132,7 +91,12 @@ enum Token {
         name: Box<str>,
         parameter_count: u32,
     },
-    BuiltInFunctionCall(BuiltInFunction),
+    BuiltInFunctionCall {
+        kind: BuiltInFunction,
+        // Note: number of *provided* parameters,
+        // not how many are required. (Same for FunctionCall.)
+        parameter_count: u32,
+    },
     Parameter {
         index: usize,
     },
@@ -201,7 +165,10 @@ impl Function {
                             bail!("Function '{called_fn_name}' takes {expected_param_count} parameters, {parameter_count} were given");
                         }
 
-                        resolved.push(Token::BuiltInFunctionCall(fn_type));
+                        resolved.push(Token::BuiltInFunctionCall {
+                            kind: fn_type,
+                            parameter_count,
+                        });
                         continue;
                     }
 
@@ -262,10 +229,13 @@ impl Function {
                         bail!("Function '{name}' does not exist.");
                     }
                 }
-                Token::BuiltInFunctionCall(fn_type) => {
-                    let parameter_count = fn_type.parameter_count();
+                Token::BuiltInFunctionCall {
+                    kind,
+                    parameter_count: num_provided_parameters,
+                } => {
+                    let parameter_count = *num_provided_parameters as usize;
                     let parameters = &stack[stack.len() - parameter_count..];
-                    let result = fn_type.evaluate(parameters, precision_bits)?;
+                    let result = kind.evaluate(parameters, precision_bits)?;
 
                     stack.drain(stack.len() - parameter_count..);
                     stack.push(result);

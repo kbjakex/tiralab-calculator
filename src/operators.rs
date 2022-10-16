@@ -176,7 +176,7 @@ impl BinaryOperator {
 
 /// Convert values such that they have the same type (type being rational or decimal or ...).
 /// Fails if there doesn't exist a non-opinionated conversion.
-fn promote_to_common_type(
+pub fn promote_to_common_type(
     operator: BinaryOperator,
     lhs: Value,
     rhs: Value,
