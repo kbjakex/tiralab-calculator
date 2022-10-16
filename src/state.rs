@@ -9,10 +9,40 @@ use crate::{
     parser,
 };
 
-#[derive(Default)]
 pub struct CalculatorState {
-    pub variables: HashMap<String, Value>,
+    pub variables: HashMap<String, Variable>,
     pub functions: HashMap<String, Function>,
+}
+
+impl CalculatorState {
+    pub fn new_with_builtins() -> Self {
+        let mut state = Self {
+            variables: Default::default(),
+            functions: Default::default(),
+        };
+        builtins::add_builtin_constants(&mut state.variables);
+        state
+    }
+
+    /// Inserts a (user-defined) variable with the given name and value.
+    /// If there was already a value with the name, the value is replaced
+    /// and the old value is returned.
+    #[rustfmt::skip]
+    pub fn set_variable(&mut self, name: &str, value: Value) -> anyhow::Result<Option<Value>> {
+        if let Some(old) = self.variables.get(name) {
+            if old.builtin {
+                bail!("'{name}' is a built-in constant that can't be replaced! Please choose another name.");
+            }
+        }
+
+        let old = self.variables.insert(name.to_owned(), Variable {
+            value,
+            builtin: false
+        })
+        .map(|var| var.value);
+
+        Ok(old)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -108,6 +138,11 @@ enum Token {
     },
 }
 
+pub struct Variable {
+    pub value: Value,
+    pub builtin: bool,
+}
+
 pub struct Function {
     name: Box<str>,
     expression: Vec<Token>,
@@ -146,8 +181,8 @@ impl Function {
                     {
                         // reverse the index, because with shunting yard, the parameters end up being in the wrong order
                         resolved.push(Token::Parameter { index });
-                    } else if let Some(value) = state.variables.get(name) {
-                        resolved.push(Token::Constant(value.clone()));
+                    } else if let Some(var) = state.variables.get(name) {
+                        resolved.push(Token::Constant(var.value.clone()));
                     } else {
                         bail!("Unknown variable '{name}'");
                     }
@@ -258,6 +293,8 @@ impl Function {
 
 #[cfg(test)]
 mod tests {
+    use crate::state::Variable;
+
     use super::{CalculatorState, Function, Value};
 
     fn eval(
@@ -278,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_simple_evaluates_correctly() {
-        let state = CalculatorState::default();
+        let state = CalculatorState::new_with_builtins();
         assert_eq!(val(1, 6), eval(&state, "1.0 / 6.0", &[], &[]));
         assert_eq!(val(5, 2), eval(&state, "(x + 3) / 2", &["x"], &[val(2, 1)]));
         assert_eq!(
@@ -298,19 +335,32 @@ mod tests {
 
     #[test]
     fn test_variable_references_work() {
-        let mut state = CalculatorState::default();
-        state
-            .variables
-            .insert("mypi".into(), val(31415926, 10000000));
-        state.variables.insert("foo".into(), val(-100, 1));
+        let mut state = CalculatorState::new_with_builtins();
+        state.variables.insert(
+            "mypi".into(),
+            Variable {
+                value: val(31415926, 10000000),
+                builtin: false,
+            },
+        );
+        state.variables.insert(
+            "foo".into(),
+            Variable {
+                value: val(-100, 1),
+                builtin: false,
+            },
+        );
 
-        assert_eq!(val(-31415926, 1000000000), eval(&state, "mypi / foo", &[], &[]));
+        assert_eq!(
+            val(-31415926, 1000000000),
+            eval(&state, "mypi / foo", &[], &[])
+        );
         assert_eq!(val(0, 1), eval(&state, "foo + x", &["x"], &[val(100, 1)]));
     }
 
     #[test]
     fn test_unknown_variables_error() {
-        let state = CalculatorState::default();
+        let state = CalculatorState::new_with_builtins();
 
         let result = Function::from_name_and_expression("foo".into(), "x", &[], &state);
         assert!(result.is_err());
@@ -318,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_function_calls_work() {
-        let mut state = CalculatorState::default();
+        let mut state = CalculatorState::new_with_builtins();
         let test_fn =
             Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state)
                 .unwrap();
@@ -338,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_unknown_functions_error() {
-        let state = CalculatorState::default();
+        let state = CalculatorState::new_with_builtins();
 
         let result = Function::from_name_and_expression("foo".into(), "f(x)", &[], &state);
         assert!(result.is_err());
@@ -350,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_parameter_count_mismatch_errors() {
-        let state = CalculatorState::default();
+        let state = CalculatorState::new_with_builtins();
         let test_fn =
             Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state)
                 .unwrap();

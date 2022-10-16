@@ -14,7 +14,7 @@ use crate::{operators::rational_to_decimal, parser::Token, state::Function};
 
 fn main() {
     let mut editor = rustyline::Editor::<()>::new().unwrap();
-    let mut state = CalculatorState::default();
+    let mut state = CalculatorState::new_with_builtins();
 
     // A simple REPL (read-eval-print-loop) interface
     loop {
@@ -74,7 +74,12 @@ fn print_output_value(value: Value) {
                 (true, false) => println!("{}i", float_to_string(&imag)),
                 (false, true) => println!("{}", float_to_string(&real)),
                 (false, false) => {
-                    println!("{} + {}i", float_to_string(&real), float_to_string(&imag))
+                    if imag < 0 {
+                        let imag = -imag;
+                        println!("{} - {}i", float_to_string(&real), float_to_string(&imag));
+                    } else {
+                        println!("{} + {}i", float_to_string(&real), float_to_string(&imag));
+                    }
                 }
             }
         }
@@ -120,7 +125,7 @@ fn process_input(state: &mut CalculatorState, input: &str) -> Result<Option<Valu
     let mut postfix = parser::infix_to_postfix(input)?;
     let result = eval_postfix(&mut postfix, state)?;
 
-    state.variables.insert("ans".to_owned(), result.clone());
+    state.set_variable("ans", result.clone())?;
 
     Ok(Some(result))
 }
@@ -173,14 +178,14 @@ fn process_variable(
     let mut value_tokens = infix_to_postfix(rest)?;
     let value = eval_postfix(&mut value_tokens, state)?;
 
-    let old = state.variables.insert(variable_name.to_owned(), value);
+    let old = state.set_variable(variable_name, value)?;
     if let Some(old_value) = old {
         println!(
             "{variable_name} changed from {old_value} to {}",
-            state.variables[variable_name]
+            state.variables[variable_name].value
         );
     } else {
-        println!("{variable_name} = {}", state.variables[variable_name]);
+        println!("{variable_name} = {}", state.variables[variable_name].value);
     }
 
     Ok(())
@@ -276,13 +281,13 @@ mod tests {
     fn test_empty_input_is_ok() {
         assert_eq!(
             None,
-            process_input(&mut CalculatorState::default(), "").unwrap()
+            process_input(&mut CalculatorState::new_with_builtins(), "").unwrap()
         );
     }
 
     #[test]
     fn test_direct_eval_works() {
-        let mut state = CalculatorState::default();
+        let mut state = CalculatorState::new_with_builtins();
         assert_eq!(Some(val(5.0)), process_input(&mut state, "5").unwrap());
         assert_eq!(
             Some(val(3.75)),
@@ -292,13 +297,13 @@ mod tests {
 
     #[test]
     fn test_invalid_input_reports_syntax_error() {
-        let mut state = CalculatorState::default();
+        let mut state = CalculatorState::new_with_builtins();
         assert!(process_input(&mut state, "()").is_err());
     }
 
     #[test]
     fn test_variables_work() {
-        let mut state = CalculatorState::default();
+        let mut state = CalculatorState::new_with_builtins();
 
         assert!(process_input(&mut state, "variable").is_err());
         assert_eq!(
@@ -321,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_invalid_variable_declaration_syntax_errors() {
-        let mut state = CalculatorState::default();
+        let mut state = CalculatorState::new_with_builtins();
         assert!(process_input(&mut state, "= 5").is_err());
         assert!(process_input(&mut state, "x =").is_err());
         assert!(process_input(&mut state, "= 5").is_err());
@@ -332,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_functions_work() {
-        let mut state = CalculatorState::default();
+        let mut state = CalculatorState::new_with_builtins();
 
         assert_eq!(None, process_input(&mut state, "f() = 5").unwrap());
         assert_eq!(Some(val(5.0)), process_input(&mut state, "f()").unwrap());
@@ -356,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_invalid_function_declaration_syntax_errors() {
-        let mut state = CalculatorState::default();
+        let mut state = CalculatorState::new_with_builtins();
         assert!(process_input(&mut state, "f(,) = 5").is_err());
         assert!(process_input(&mut state, "f( = 5").is_err());
         assert!(process_input(&mut state, "f() =").is_err());
