@@ -42,8 +42,10 @@ impl Value {
 
     pub fn type_name(&self) -> &'static str {
         match self {
-            Value::Decimal(_) => "decimal",
-            Value::Rational(_) => "rational",
+            // To not confuse end users with information that is unlikely
+            // to be useful, display both rationals and decimals as "real number"
+            Value::Decimal(_) => "real number",
+            Value::Rational(_) => "real number",
             Value::Complex(_) => "complex",
             Value::Boolean(_) => "boolean",
         }

@@ -18,7 +18,7 @@ fn main() {
 
     // A simple REPL (read-eval-print-loop) interface
     loop {
-        let line = editor.readline("");
+        let line = editor.readline("> ");
         match line {
             Ok(line) => {
                 let line = line.trim().to_lowercase();

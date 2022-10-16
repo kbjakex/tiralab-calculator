@@ -350,7 +350,6 @@ impl<'a> TokenIterator<'a> {
             // a leading decimal point, so fix by appending a zero when it's missing.
             string.insert(0, '0');
         }
-        println!("'{string}' (len {})", string.len());
 
         let period_index = string.find('.');
 
@@ -464,6 +463,14 @@ impl<'a> TokenIterator<'a> {
                     if self.source.get(self.index) == Some(&b'(') {
                         return Ok(ParserToken::Function { name });
                     }
+
+                    if name == "true" {
+                        return Ok(ParserToken::Number(Value::Boolean(true)));
+                    }
+                    if name == "false" {
+                        return Ok(ParserToken::Number(Value::Boolean(false)));
+                    }
+
                     return Ok(ParserToken::Variable { name });
                 }
 

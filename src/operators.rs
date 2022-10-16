@@ -69,7 +69,7 @@ impl BinaryOperator {
             }
         }
 
-        match promote_to_common_type(lhs, rhs, precision_bits)? {
+        match promote_to_common_type(self, lhs, rhs, precision_bits)? {
             (Rational(lhs), Rational(rhs)) => {
                 let result = match self {
                     Add => rug::Rational::from(lhs + rhs),
@@ -141,6 +141,8 @@ impl BinaryOperator {
                 let result = match self {
                     LogicalOr => lhs || rhs,
                     LogicalAnd => lhs && rhs,
+                    EqualTo => lhs == rhs,
+                    NequalTo => lhs != rhs,
                     other => bail!("'{}' is not defined for booleans", other.display_name())
                 };
                 Ok(Boolean(result))
@@ -152,23 +154,22 @@ impl BinaryOperator {
     fn display_name(self) -> &'static str {
         use BinaryOperator::*;
         match self {
-            Add => "add (+)",
-            Subtract => "subtract (-)",
-            Multiply => "multiply (*)",
-            Divide => "divide (/)",
-            Remainder => "remainder (%)",
-            Power => "power (^)",
+            Add => "+",
+            Subtract => "-",
+            Multiply => "*",
+            Divide => "/",
+            Remainder => "%",
+            Power => "^",
             
-            LessThan => "less than (<)",
-            LequalTo => "less or equal to (<=)",
-            GreaterThan => "greater than (>)",
-            GequalTo => "greater or equal to (>=)",
-            EqualTo => "equal to (==)",
-            NequalTo => "not equal to (!=)",
+            LessThan => "<",
+            LequalTo => "<=",
+            GreaterThan => ">",
+            GequalTo => ">=",
+            EqualTo => "==",
+            NequalTo => "!=",
 
-            LogicalAnd => "logical and (&&)",
-            LogicalOr => "logical or (||)",
-            
+            LogicalAnd => "&&",
+            LogicalOr => "||",
         }
     }
 }
@@ -176,6 +177,7 @@ impl BinaryOperator {
 /// Convert values such that they have the same type (type being rational or decimal or ...).
 /// Fails if there doesn't exist a non-opinionated conversion.
 fn promote_to_common_type(
+    operator: BinaryOperator,
     lhs: Value,
     rhs: Value,
     precision_bits: u32,
@@ -209,9 +211,13 @@ fn promote_to_common_type(
         ),
 
         (Boolean(lhs), Boolean(rhs)) => (Boolean(lhs), Boolean(rhs)),
-        (Boolean(_), other) | (other, Boolean(_)) => bail!(
-            "Can't implicitly convert between {} and boolean",
-            other.type_name()
+        (Boolean(lhs), rhs) => bail!(
+            "Can't implicitly convert between {} and boolean (needed for '{lhs} {} {rhs}')",
+            rhs.type_name(), operator.display_name()
+        ),
+        (lhs, Boolean(rhs)) => bail!(
+            "Can't implicitly convert between {} and boolean (needed for '{lhs} {} {rhs}')",
+            lhs.type_name(), operator.display_name()
         ),
 
         // If both are of the same type already.
