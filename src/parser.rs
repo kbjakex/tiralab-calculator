@@ -350,6 +350,9 @@ impl<'a> TokenIterator<'a> {
             // a leading decimal point, so fix by appending a zero when it's missing.
             string.insert(0, '0');
         }
+        if string.ends_with(".") {
+            string.push('0');
+        }
 
         let period_index = string.find('.');
 
@@ -551,7 +554,9 @@ mod tests {
 
     #[test]
     fn test_invalid_numbers_are_rejected() {
-        assert!(infix_to_postfix(".0").is_err());
+        assert!(infix_to_postfix(".0.0").is_err());
+        assert!(infix_to_postfix("0.0.").is_err());
+        assert!(infix_to_postfix("0.0.0").is_err());
         assert!(infix_to_postfix("0..").is_err());
         assert!(infix_to_postfix("..0").is_err());
         assert!(infix_to_postfix(".0.").is_err());
