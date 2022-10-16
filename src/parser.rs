@@ -1,8 +1,11 @@
 use anyhow::{bail, Result};
-use bstr::{BStr, ByteSlice};
-use rug::{Assign, ops::PowAssign};
+use bstr::BStr;
+use rug::{ops::PowAssign, Assign};
 
-use crate::{operators::{BinaryOperator, UnaryOperator}, state::Value};
+use crate::{
+    operators::{BinaryOperator, UnaryOperator},
+    state::Value,
+};
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
@@ -38,9 +41,18 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
     use crate::operators::UnaryOperator as UnOp;
     use ParserToken::*;
 
-    fn assert_value_is_valid_here(token: &ParserToken, prev_token: &Option<ParserToken>) -> anyhow::Result<()> {
-        if !matches!(prev_token, None | Some(Delimiter | LeftParen | UnaryOperator(..) | BinaryOperator(..))) {
-            bail!("A value (`{token}`) is not valid after `{}`", prev_token.as_ref().unwrap());
+    fn assert_value_is_valid_here(
+        token: &ParserToken,
+        prev_token: &Option<ParserToken>,
+    ) -> anyhow::Result<()> {
+        if !matches!(
+            prev_token,
+            None | Some(Delimiter | LeftParen | UnaryOperator(..) | BinaryOperator(..))
+        ) {
+            bail!(
+                "A value (`{token}`) is not valid after `{}`",
+                prev_token.as_ref().unwrap()
+            );
         }
         Ok(())
     }
@@ -59,27 +71,33 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
                 assert_value_is_valid_here(&token, &last_token)?;
                 output.push(Token::Number(value.clone()));
             }
+
             Variable { name } => {
                 assert_value_is_valid_here(&token, &last_token)?;
                 output.push(Token::Variable { name });
             }
+            
             Function { name } => {
                 assert_value_is_valid_here(&token, &last_token)?;
                 operators.push(Function { name });
                 parameter_counts.push(0);
             }
+            
             LeftParen => {
                 if matches!(last_token, Some(Number(..))) {
                     bail!("`(` is not valid after `{}`", last_token.unwrap());
                 }
                 operators.push(LeftParen);
             }
+            
             RightParen => {
                 if matches!(last_token, Some(Delimiter)) {
                     bail!("Empty function parameter after `,`");
-                } 
+                }
 
-                if matches!(last_token, Some(LeftParen)) && !matches!(&operators[..], &[.., ParserToken::Function { .. }, _]) {
+                if matches!(last_token, Some(LeftParen))
+                    && !matches!(&operators[..], &[.., ParserToken::Function { .. }, _])
+                {
                     bail!("Empty parentheses is invalid");
                 }
 
@@ -104,19 +122,29 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
                     operators.pop();
                 }
             }
+
             UnaryOperator(operator) => {
                 if matches!(last_token, Some(UnaryOperator(..))) {
-                    bail!("Two (unary) operators in a row (`{token}` and `{}`)", last_token.unwrap());
+                    bail!(
+                        "Two (unary) operators in a row (`{token}` and `{}`)",
+                        last_token.unwrap()
+                    );
                 }
                 operators.push(UnaryOperator(operator));
             }
+            
             BinaryOperator(operator) => {
                 // Detect unary -
-                if matches!(last_token, None | Some(LeftParen | UnaryOperator(..) | BinaryOperator(..)))
-                    && matches!(operator, BinOp::Subtract)
+                if matches!(
+                    last_token,
+                    None | Some(LeftParen | UnaryOperator(..) | BinaryOperator(..))
+                ) && matches!(operator, BinOp::Subtract)
                 {
                     if matches!(last_token, Some(UnaryOperator(..))) {
-                        bail!("Two (unary) operators in a row (`{token}` and `{}`)", last_token.unwrap());
+                        bail!(
+                            "Two (unary) operators in a row (`{token}` and `{}`)",
+                            last_token.unwrap()
+                        );
                     }
                     operators.push(UnaryOperator(UnOp::Negate));
                     last_token = Some(UnaryOperator(UnOp::Negate));
@@ -124,7 +152,10 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
                 }
 
                 if matches!(last_token, Some(UnaryOperator(..) | BinaryOperator(..))) {
-                    bail!("Two operators in a row (`{token}` and `{}`)", last_token.unwrap());
+                    bail!(
+                        "Two operators in a row (`{token}` and `{}`)",
+                        last_token.unwrap()
+                    );
                 }
                 if matches!(last_token, None) {
                     bail!("Can't start with a binary (two-operand) operator");
@@ -160,6 +191,7 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
 
                 operators.push(BinaryOperator(operator));
             }
+
             Delimiter => {
                 if matches!(last_token, Some(LeftParen | Delimiter)) {
                     bail!("Empty function parameter before a `,`");
@@ -175,11 +207,11 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> Result<Vec<Token<'a>>> {
                     match operators.last() {
                         Some(&BinaryOperator(top_of_stack)) => {
                             output.push(Token::BinaryOperator(top_of_stack));
-                        },
+                        }
                         Some(&UnaryOperator(top_of_stack)) => {
                             output.push(Token::UnaryOperator(top_of_stack));
                         }
-                        _ => break
+                        _ => break,
                     }
                     operators.pop();
                 }
@@ -209,7 +241,7 @@ fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<T
     loop {
         let top = match operators.last() {
             None | Some(ParserToken::LeftParen) => return,
-            _ => operators.pop().unwrap()
+            _ => operators.pop().unwrap(),
         };
 
         match top {
@@ -263,7 +295,6 @@ impl std::fmt::Display for ParserToken<'_> {
                 BinaryOperator::NequalTo => f.write_str("!="),
                 BinaryOperator::LogicalAnd => f.write_str("&&"),
                 BinaryOperator::LogicalOr => f.write_str("||"),
-                
             },
             ParserToken::UnaryOperator(op) => match op {
                 UnaryOperator::Negate => f.write_str("-"),
@@ -288,7 +319,7 @@ impl<'a> TokenIterator<'a> {
             source: source.into(), // Guaranteed to be free and infallible
             index: 0,
             last_was_number: false,
-            precision_bits
+            precision_bits,
         }
     }
 
@@ -310,15 +341,18 @@ impl<'a> TokenIterator<'a> {
             .position(|&c| !c.is_ascii_digit() && c != b'.')
             .map_or(self.source.len(), |i| i + self.index);
 
-        let mut byte_str = &self.source[self.index..end_index];
-        if end_index > 1 && self.source[end_index - 1] == b'.' {
-            byte_str = &byte_str[..byte_str.len() - 1]; // Exclude decimal point if it's last, i.e `123.` 
-        }
-        let period_index = byte_str.find_char('.');
-
         // SAFETY: this is safe, because byte_str can necessarily only contain ascii digits or an ascii dot,
         // and ascii is valid UTF-8. Both types have the same representation. Empty source is also fine.
-        let str_slice: &str = unsafe { std::mem::transmute(byte_str) };
+        let string: &str = unsafe { std::mem::transmute(&self.source[self.index..end_index]) };
+        let mut string = string.to_owned();
+        if string.starts_with(".") {
+            // Reviewer suggestion: allow leading `.`. Rug doesn't allow
+            // a leading decimal point, so fix by appending a zero when it's missing.
+            string.insert(0, '0');
+        }
+        println!("'{string}' (len {})", string.len());
+
+        let period_index = string.find('.');
 
         self.index = end_index;
         self.last_was_number = true;
@@ -326,10 +360,13 @@ impl<'a> TokenIterator<'a> {
         if let Some(b'i') = self.source.get(self.index) {
             self.last_was_number = false; // don't allow a variable directly after the 'i'
             self.index += 1;
-            
+
             // Imaginary unit
             let mut value = rug::Complex::new(self.precision_bits);
-            value.assign((rug::Float::new(self.precision_bits), rug::Float::parse(str_slice)?));
+            value.assign((
+                rug::Float::new(self.precision_bits),
+                rug::Float::parse(string)?,
+            ));
             return Ok(Value::Complex(value));
         }
 
@@ -338,8 +375,8 @@ impl<'a> TokenIterator<'a> {
             // might as well parse them as exact rationals by parsing `123.456` as `123456/1000` and letting
             // the library canonicalize it.
 
-            let whole_part_str = &str_slice[..index];
-            let fract_part_str = &str_slice[index+1..];
+            let whole_part_str = &string[..index];
+            let fract_part_str = &string[index + 1..];
 
             let mut whole_part = rug::Integer::new();
             whole_part.assign(rug::Integer::parse(whole_part_str)?);
@@ -359,7 +396,7 @@ impl<'a> TokenIterator<'a> {
             return Ok(Value::Rational(rational));
         }
 
-        let res = rug::Rational::parse(str_slice)?;
+        let res = rug::Rational::parse(string)?;
         let mut value = rug::Rational::new();
         value.assign(res);
 
@@ -418,7 +455,7 @@ impl<'a> TokenIterator<'a> {
             (b'>', _) => (ParserToken::BinaryOperator(BinaryOperator::GreaterThan), 1),
 
             (c, _) => {
-                if c.is_ascii_digit() {
+                if c == b'.' || c.is_ascii_digit() {
                     return Ok(ParserToken::Number(self.read_number()?));
                 }
                 if c.is_ascii_alphabetic() {
@@ -430,7 +467,9 @@ impl<'a> TokenIterator<'a> {
                     return Ok(ParserToken::Variable { name });
                 }
 
-                bail!("Invalid token `{}` (at `{}`)", c as char, unsafe { std::mem::transmute::<&BStr, &str>(&self.source[self.index..])});
+                bail!("Invalid token `{}` (at `{}`)", c as char, unsafe {
+                    std::mem::transmute::<&BStr, &str>(&self.source[self.index..])
+                });
             }
         };
 

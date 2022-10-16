@@ -5,8 +5,6 @@ pub mod operators;
 pub mod parser;
 pub mod state;
 
-use std::io::BufRead;
-
 use parser::{infix_to_postfix, ParserToken, TokenIterator};
 
 use anyhow::{bail, Result};
@@ -15,29 +13,30 @@ use state::{CalculatorState, Value};
 use crate::{operators::rational_to_decimal, parser::Token, state::Function};
 
 fn main() {
+    let mut editor = rustyline::Editor::<()>::new().unwrap();
     let mut state = CalculatorState::default();
 
     // A simple REPL (read-eval-print-loop) interface
-    //print_input_expected_marker();
-    for line in std::io::stdin().lock().lines() {
-        if line.is_err() {
-            return; // No more input
+    loop {
+        let line = editor.readline("");
+        match line {
+            Ok(line) => {
+                let line = line.trim().to_lowercase();
+                if line == "exit" {
+                    break;
+                }
+
+                editor.add_history_entry(line.as_str());
+        
+                match process_input(&mut state, &line) {
+                    Ok(Some(output)) => print_output_value(output),
+                    Ok(None) => {}
+                    Err(e) => println!("{e}"),
+                }
+                println!();
+            },
+            _ => return,
         }
-
-        let line = line.unwrap().trim().to_lowercase();
-
-        if line == "exit" {
-            break;
-        }
-
-        match process_input(&mut state, &line) {
-            Ok(Some(output)) => print_output_value(output),
-            Ok(None) => {}
-            Err(e) => println!("{e}"),
-        }
-        println!();
-
-        //print_input_expected_marker();
     }
 }
 
@@ -149,7 +148,7 @@ fn process_variable_or_function(
             process_variable(name, rest, state)?;
         }
         ParserToken::Function { name } => {
-            debug_assert!(matches!(tokens.next().unwrap()?, ParserToken::LeftParen));
+            assert!(matches!(tokens.next().unwrap()?, ParserToken::LeftParen));
             process_function(name, tokens, rest, state)?;
         }
         other => bail!("Syntax error: found `=`, but input did not start with a function/variable name, but `{other}`")

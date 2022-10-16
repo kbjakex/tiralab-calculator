@@ -6,11 +6,15 @@ A scientific calculator University project
 
 For the peer reviews: feel free to reach out for any questions or concerns or such on Discord - PM jetp250#8243 through [The Programmer's Hangout](https://discord.gg/programming).
 
+### Documentation
+
+[Project definition](https://github.com/kbjakex/tiralab-calculator/blob/main/documentation/definition.md)
+
 [User guide](https://github.com/kbjakex/tiralab-calculator/blob/main/documentation/user-guide.md)
 
 ### Project status
 
-The project is very nearly done. Direct evaluation, variables and functions work (see the user guide), input validation is at a good state, all intended operators are supported, code coverage is high, error messages are decent. Only built-in functions & constants remain to be added.
+The original goals were met, and the project is currently being expanded: a simple type system is being introduced for arbitrary-precision calculation, boolean operations and exact/complex number computation. At the moment, this lacks testing, and built-in functions remain to be implemented (only sqrt() is in).
 
 ### Rust version
 
