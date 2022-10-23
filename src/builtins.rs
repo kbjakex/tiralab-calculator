@@ -1,112 +1,95 @@
 // All the built-in functions.
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use bevy_utils::HashMap;
 use rug::Assign;
 
 use crate::{
-    operators::{rational_to_complex, rational_to_decimal},
+    operators::BinaryOperator,
     state::{Value, Variable},
+    DEFAULT_PRECISION, util::promote_to_common_type,
 };
 
-#[derive(Debug, Clone, Copy)]
-pub enum BuiltInFunction {
-    Sqrt,
-    Cbrt,
-    Abs,
-    Floor,
-    Ceil,
-    Round,
-    Sin,
-    Cos,
-    Tan,
-    Asin,
-    Acos,
-    Atan,
-    Exp,
-    Ln,
-    Log10,
-    Log2,
-}
+pub type BuiltinFnPtr = fn(&[Value], u32) -> anyhow::Result<Value>;
 
-impl BuiltInFunction {
-    pub fn from_name(name: &str) -> Option<Self> {
-        let result = match name {
-            "sqrt" => Self::Sqrt,
-            "cbrt" => Self::Cbrt,
-            "abs" => Self::Abs,
-            "floor" => Self::Floor,
-            "round" => Self::Round,
-            "ceil" => Self::Ceil,
-            "sin" => Self::Sin,
-            "cos" => Self::Cos,
-            "tan" => Self::Tan,
-            "asin" => Self::Asin,
-            "acos" => Self::Acos,
-            "atan" => Self::Atan,
-            "exp" => Self::Exp,
-            "ln" => Self::Ln,
-            "log10" => Self::Log10,
-            "log2" => Self::Log2,
-            _ => return None,
-        };
-
-        Some(result)
-    }
-
-    pub const fn parameter_count(self) -> usize {
-        match self {
-            _ => 1,
-        }
-    }
-
-    pub fn evaluate(self, parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
-        use BuiltInFunction::*;
-        match self {
-            Sqrt => sqrt(parameters, precision_bits),
-            Cbrt => bail!("Unimplemented"),
-            Abs => abs(parameters),
-            Sin => sin(parameters, precision_bits),
-            Cos => cos(parameters, precision_bits),
-            Tan => tan(parameters, precision_bits),
-            Floor => floor(parameters),
-            Ceil => ceil(parameters),
-            Round => round(parameters),
-            Asin => asin(parameters, precision_bits),
-            Acos => acos(parameters, precision_bits),
-            Atan => atan(parameters, precision_bits),
-            Exp => exp(parameters, precision_bits),
-            Ln => ln(parameters, precision_bits),
-            Log10 => log10(parameters, precision_bits),
-            Log2 => log2(parameters, precision_bits),
-        }
-    }
+/// If a builtin function exists with the given name, a function pointer to
+/// that function is returned along with its expected parameter count.
+/// The parameter count will be usize::MAX if it takes a variable number of
+/// parameters.
+#[rustfmt::skip]
+pub fn resolve_builtin_fn_call(name: &str) -> Option<(BuiltinFnPtr, usize)> {
+    let (fn_ptr, param_count) = match name {
+        "sqrt"  => (sqrt as BuiltinFnPtr, 1),
+        "cbrt"  => (cbrt as BuiltinFnPtr, 1),
+        "abs"   => (abs as BuiltinFnPtr, 1),
+        "floor" => (floor as BuiltinFnPtr, 1),
+        "round" => (round as BuiltinFnPtr, 1),
+        "ceil"  => (ceil as BuiltinFnPtr, 1),
+        "sin"   => (sin as BuiltinFnPtr, 1),
+        "cos"   => (cos as BuiltinFnPtr, 1),
+        "tan"   => (tan as BuiltinFnPtr, 1),
+        "asin" | "arcsin"  => (asin as BuiltinFnPtr, 1),
+        "acos" | "arccos"  => (acos as BuiltinFnPtr, 1),
+        "atan" | "arctan"  => (atan as BuiltinFnPtr, 1),
+        "exp"   => (exp as BuiltinFnPtr, 1),
+        "ln"    => (ln as BuiltinFnPtr, 1),
+        "log10" => (log10 as BuiltinFnPtr, 1),
+        "log2"  => (log2 as BuiltinFnPtr, 1),
+        "avg"   => (avg as BuiltinFnPtr, usize::MAX),
+        _ => return None,
+    };
+    Some((fn_ptr, param_count))
 }
 
 fn sqrt(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
-    let result = match parameters {
-        [Value::Rational(value)] => {
-            let (numer, denom) = (value.numer(), value.denom());
-            if numer.is_perfect_square() && denom.is_perfect_square() {
-                Value::Rational(rug::Rational::from((
-                    numer.clone().sqrt(),
-                    denom.clone().sqrt(),
-                )))
-            } else if numer < &0 {
-                let mut complex = rational_to_complex(&value, precision_bits);
-                complex.sqrt_mut();
-                Value::Complex(complex)
-            } else {
-                let mut decimal = rational_to_decimal(&value, precision_bits);
-                decimal.sqrt_mut();
-                Value::Decimal(decimal)
-            }
-        }
-        [Value::Decimal(value)] => Value::Decimal(value.clone().sqrt()),
-        [Value::Complex(value)] => Value::Complex(value.clone().sqrt()),
-        [other] => bail!("sqrt() not defined for {}", other.type_name()),
-        others => bail!("sqrt() takes 1 parameter, {} provided", others.len()),
-    };
+    if parameters.len() != 1 {
+        // Typo for consistency :)
+        bail!("sqrt() takes 1 parameters, 0 provided");
+    }
+
+    let parameter = parameters[0].clone();
+    if matches!(parameter, Value::Boolean(..)) {
+        bail!("sqrt() not defined for {}", parameter.type_name());
+    }
+
+    let exponent = rug::Rational::from((1, 2));
+
+    BinaryOperator::Power.apply(parameter, Value::Rational(exponent), precision_bits)
+}
+
+fn cbrt(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
+    if parameters.len() != 1 {
+        // Typo for consistency :)
+        bail!("cbrt() takes 1 parameters, 0 provided");
+    }
+
+    let parameter = parameters[0].clone();
+    if matches!(parameter, Value::Boolean(..)) {
+        bail!("cbrt() not defined for {}", parameter.type_name());
+    }
+
+    let exponent = rug::Rational::from((1, 3));
+
+    BinaryOperator::Power.apply(parameter, Value::Rational(exponent), precision_bits)
+}
+
+/// 'avg()' takes a variable number of parameters (> 0) unlike most other functions.
+fn avg(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
+    if parameters.len() == 0 {
+        bail!("avg() takes at least 1 parameter, 0 provided");
+    }
+
+    let mut sum = parameters[0].clone();
+    for (i, next) in (&parameters[1..]).iter().enumerate() {
+        let (lhs, rhs) = promote_to_common_type(&sum, next, precision_bits).with_context(|| {
+            format!("In avg() with parameters '{}' and '{next}'", parameters[i])
+        })?;
+
+        sum = BinaryOperator::Add.apply(lhs, rhs, precision_bits)?;
+    }
+
+    let count = rug::Rational::from((parameters.len() as u32, 1));
+    let result = BinaryOperator::Divide.apply(sum, Value::Rational(count), precision_bits)?;
 
     Ok(result)
 }
@@ -116,7 +99,7 @@ fn sqrt(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
 /// rational to decimal in case rationals don't have an implementation (such as sin, cos)
 macro_rules! single_param_fn {
     ($fn:ident, $($type:ident),+) => {
-        fn $fn(parameters: &[Value]) -> anyhow::Result<Value> {
+        fn $fn(parameters: &[Value], _precision_bits: u32) -> anyhow::Result<Value> {
             let result = match parameters {
                 $([Value::$type(value)] => Value::$type(value.clone().$fn()),)*
                 [other] => bail!(concat!(stringify!($fn), "() not defined for {}"), other.type_name()),
@@ -131,7 +114,7 @@ macro_rules! single_param_fn {
             let result = match parameters {
                 $([Value::$type(value)] => Value::$type(value.clone().$fn()),)*
                 [Value::Rational(value)] => Value::Decimal({
-                    let decimal = crate::operators::rational_to_decimal(value, precision_bits);
+                    let decimal = crate::util::rational_to_decimal(value, precision_bits);
                     decimal.$fn()
                 }),
                 [other] => bail!(concat!(stringify!($fn), "() not defined for {}"), other.type_name()),
@@ -164,7 +147,7 @@ single_param_fn!(log2, Decimal; rational_to_decimal);
 #[rustfmt::skip]
 pub fn add_builtin_constants(variables: &mut HashMap<String, Variable>) {
     fn add_constant(variables: &mut HashMap<String, Variable>, name: &str, value_as_string: &str) {
-        let mut decimal = rug::Float::new(128);
+        let mut decimal = rug::Float::new(DEFAULT_PRECISION);
         decimal.assign(rug::Float::parse(value_as_string).unwrap());
 
         variables.insert(
@@ -176,13 +159,13 @@ pub fn add_builtin_constants(variables: &mut HashMap<String, Variable>) {
         );
     }
 
-    // 128 bits is roughly 40 decimal places
-    add_constant(variables, "pi", "3.141592653589793238462643383279502884197");
-    add_constant(variables, "tau", "6.283185307179586476925286766559005768394");
-    add_constant(variables, "e", "2.718281828459045235360287471352662497757");
+    // 256 bits is roughly 78 decimal places
+    add_constant(variables, "pi", "3.14159265358979323846264338327950288419716939937510582097494459230781640628621");
+    add_constant(variables, "tau", "6.28318530717958647692528676655900576839433879875021164194988918461563281257242");
+    add_constant(variables, "e", "2.71828182845904523536028747135266249775724709369995957496696762772407663035355");
 
     // Add 'i' as the imaginary unit, for when there is not a quantity before it (such as `1i`).
-    let imag_unit = rug::Complex::from((rug::Float::new(128), rug::Float::with_val(128, 1.0)));
+    let imag_unit = rug::Complex::from((rug::Float::new(DEFAULT_PRECISION), rug::Float::with_val(DEFAULT_PRECISION, 1.0)));
     variables.insert(
         "i".to_owned(),
         Variable {

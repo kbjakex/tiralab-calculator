@@ -1,12 +1,12 @@
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 
 use anyhow::bail;
 use bevy_utils::HashMap;
 
 use crate::{
-    builtins::{self, BuiltInFunction},
+    builtins::{self, BuiltinFnPtr},
     operators::{BinaryOperator, UnaryOperator},
-    parser,
+    parser::{self, parse_error, ParseResult},
 };
 
 pub struct CalculatorState {
@@ -28,11 +28,15 @@ impl CalculatorState {
     /// If there was already a value with the name, the value is replaced
     /// and the old value is returned.
     #[rustfmt::skip]
-    pub fn set_variable(&mut self, name: &str, value: Value) -> anyhow::Result<Option<Value>> {
+    pub fn set_variable(&mut self, name: &str, value: Value, dry_run: bool) -> anyhow::Result<Option<Value>> {
         if let Some(old) = self.variables.get(name) {
             if old.builtin {
                 bail!("'{name}' is a built-in constant that can't be replaced! Please choose another name.");
             }
+        }
+
+        if dry_run {
+            return Ok(None);
         }
 
         let old = self.variables.insert(name.to_owned(), Variable {
@@ -82,7 +86,6 @@ impl Value {
     }
 }
 
-#[derive(Debug)]
 enum Token {
     Constant(Value),
     BinaryOperator(BinaryOperator),
@@ -92,7 +95,7 @@ enum Token {
         parameter_count: u32,
     },
     BuiltInFunctionCall {
-        kind: BuiltInFunction,
+        fn_pointer: BuiltinFnPtr,
         // Note: number of *provided* parameters,
         // not how many are required. (Same for FunctionCall.)
         parameter_count: u32,
@@ -116,29 +119,34 @@ pub struct Function {
 impl Function {
     pub fn from_name_and_expression(
         name: Box<str>,
+        name_span: Range<usize>,
         expression: &str,
         parameter_names: &[&str],
         state: &CalculatorState,
-    ) -> anyhow::Result<Self> {
+    ) -> ParseResult<Self> {
         let tokens = parser::infix_to_postfix(expression)?;
-        Self::from_name_and_tokens(name, &tokens, parameter_names, state)
+        Self::from_name_and_tokens(name, name_span, &tokens, parameter_names, state)
     }
 
     pub fn from_name_and_tokens(
         name: Box<str>,
+        name_span: Range<usize>,
         tokens: &[parser::Token],
         parameter_names: &[&str],
         state: &CalculatorState,
-    ) -> anyhow::Result<Self> {
-        if BuiltInFunction::from_name(&name).is_some() {
-            bail!("{name} is a built-in function! Choose another name.");
+    ) -> ParseResult<Self> {
+        if builtins::resolve_builtin_fn_call(&name).is_some() {
+            parse_error!(
+                name_span,
+                "{name} is a built-in function! Choose another name."
+            );
         }
 
         let mut resolved = Vec::new();
         for token in tokens {
-            match token {
-                parser::Token::Number(value) => resolved.push(Token::Constant(value.clone())),
-                &parser::Token::Variable { name } => {
+            match &token.kind {
+                parser::TokenKind::Number(value) => resolved.push(Token::Constant(value.clone())),
+                &parser::TokenKind::Variable { name } => {
                     if let Some(index) = parameter_names
                         .iter()
                         .position(|param_name| *param_name == name)
@@ -148,25 +156,28 @@ impl Function {
                     } else if let Some(var) = state.variables.get(name) {
                         resolved.push(Token::Constant(var.value.clone()));
                     } else {
-                        bail!("Unknown variable '{name}'");
+                        parse_error!(token.span.clone(), "Unknown variable '{name}'");
                     }
                 }
-                &parser::Token::Function {
+                &parser::TokenKind::Function {
                     name: called_fn_name,
                     parameter_count,
                 } => {
                     if called_fn_name == name.as_ref() {
-                        bail!("Recursion is not allowed!");
+                        parse_error!(token.span.clone(), "Recursion is not allowed!");
                     }
 
-                    if let Some(fn_type) = BuiltInFunction::from_name(called_fn_name) {
-                        let expected_param_count = fn_type.parameter_count();
-                        if parameter_count as usize != expected_param_count {
-                            bail!("Function '{called_fn_name}' takes {expected_param_count} parameters, {parameter_count} were given");
+                    if let Some((fn_pointer, expected_param_count)) =
+                        builtins::resolve_builtin_fn_call(called_fn_name)
+                    {
+                        if parameter_count as usize != expected_param_count
+                            && expected_param_count != usize::MAX
+                        {
+                            parse_error!(token.span.clone(), "Function '{called_fn_name}' takes {expected_param_count} parameters, {parameter_count} were given");
                         }
 
                         resolved.push(Token::BuiltInFunctionCall {
-                            kind: fn_type,
+                            fn_pointer,
                             parameter_count,
                         });
                         continue;
@@ -177,10 +188,10 @@ impl Function {
                         parameter_count,
                     });
                 }
-                &parser::Token::UnaryOperator(operator) => {
+                &parser::TokenKind::UnaryOperator(operator) => {
                     resolved.push(Token::UnaryOperator(operator));
                 }
-                &parser::Token::BinaryOperator(operator) => {
+                &parser::TokenKind::BinaryOperator(operator) => {
                     resolved.push(Token::BinaryOperator(operator));
                 }
             };
@@ -230,12 +241,12 @@ impl Function {
                     }
                 }
                 Token::BuiltInFunctionCall {
-                    kind,
+                    fn_pointer,
                     parameter_count: num_provided_parameters,
                 } => {
                     let parameter_count = *num_provided_parameters as usize;
                     let parameters = &stack[stack.len() - parameter_count..];
-                    let result = kind.evaluate(parameters, precision_bits)?;
+                    let result = fn_pointer(parameters, precision_bits)?;
 
                     stack.drain(stack.len() - parameter_count..);
                     stack.push(result);
@@ -263,7 +274,7 @@ impl Function {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::Variable;
+    use crate::{state::Variable, DEFAULT_PRECISION};
 
     use super::{CalculatorState, Function, Value};
 
@@ -273,9 +284,9 @@ mod tests {
         params: &[&str],
         param_values: &[Value],
     ) -> Value {
-        Function::from_name_and_expression("foo".into(), expression, params, state)
+        Function::from_name_and_expression("foo".into(), 0..0, expression, params, state)
             .unwrap()
-            .evaluate(state, param_values, 128)
+            .evaluate(state, param_values, DEFAULT_PRECISION)
             .unwrap()
     }
 
@@ -332,16 +343,21 @@ mod tests {
     fn test_unknown_variables_error() {
         let state = CalculatorState::new_with_builtins();
 
-        let result = Function::from_name_and_expression("foo".into(), "x", &[], &state);
+        let result = Function::from_name_and_expression("foo".into(), 0..0, "x", &[], &state);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_function_calls_work() {
         let mut state = CalculatorState::new_with_builtins();
-        let test_fn =
-            Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state)
-                .unwrap();
+        let test_fn = Function::from_name_and_expression(
+            "f".into(),
+            0..0,
+            "x * y / z",
+            &["x", "y", "z"],
+            &state,
+        )
+        .unwrap();
         state.functions.insert("f".into(), test_fn);
 
         assert_eq!(val(3 * 5, 7), eval(&state, "f(3, 5, 7)", &[], &[]));
@@ -360,28 +376,39 @@ mod tests {
     fn test_unknown_functions_error() {
         let state = CalculatorState::new_with_builtins();
 
-        let result = Function::from_name_and_expression("foo".into(), "f(x)", &[], &state);
+        let result = Function::from_name_and_expression("foo".into(), 0..0, "f(x)", &[], &state);
         assert!(result.is_err());
 
         let result =
-            Function::from_name_and_expression("foo".into(), "g(x) + f(x, y)", &[], &state);
+            Function::from_name_and_expression("foo".into(), 0..0, "g(x) + f(x, y)", &[], &state);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parameter_count_mismatch_errors() {
         let state = CalculatorState::new_with_builtins();
-        let test_fn =
-            Function::from_name_and_expression("f".into(), "x * y / z", &["x", "y", "z"], &state)
-                .unwrap();
+        let test_fn = Function::from_name_and_expression(
+            "f".into(),
+            0..0,
+            "x * y / z",
+            &["x", "y", "z"],
+            &state,
+        )
+        .unwrap();
 
-        assert!(test_fn.evaluate(&state, &[], 128).is_err());
-        assert!(test_fn.evaluate(&state, &[val(1, 1)], 128).is_err());
+        assert!(test_fn.evaluate(&state, &[], DEFAULT_PRECISION).is_err());
         assert!(test_fn
-            .evaluate(&state, &[val(1, 1), val(2, 1)], 128)
+            .evaluate(&state, &[val(1, 1)], DEFAULT_PRECISION)
             .is_err());
         assert!(test_fn
-            .evaluate(&state, &[val(1, 1), val(2, 1), val(3, 1)], 128)
+            .evaluate(&state, &[val(1, 1), val(2, 1)], DEFAULT_PRECISION)
+            .is_err());
+        assert!(test_fn
+            .evaluate(
+                &state,
+                &[val(1, 1), val(2, 1), val(3, 1)],
+                DEFAULT_PRECISION
+            )
             .is_ok());
     }
 }
