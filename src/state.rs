@@ -49,6 +49,13 @@ impl CalculatorState {
     }
 }
 
+#[derive(PartialEq, Debug)]
+pub enum OutputFmt {
+    Base10,
+    Binary,
+    Hex
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
     Decimal(rug::Float),
@@ -114,6 +121,7 @@ pub struct Function {
     name: Box<str>,
     expression: Vec<Token>,
     pub parameter_count: u32,
+    pub output_format: OutputFmt
 }
 
 impl Function {
@@ -143,6 +151,7 @@ impl Function {
         }
 
         let mut resolved = Vec::new();
+        let mut output_format = OutputFmt::Base10;
         for token in tokens {
             match &token.kind {
                 parser::TokenKind::Number(value) => resolved.push(Token::Constant(value.clone())),
@@ -180,6 +189,14 @@ impl Function {
                             fn_pointer,
                             parameter_count,
                         });
+
+                        match called_fn_name {
+                            "dec" => output_format = OutputFmt::Base10,
+                            "hex" => output_format = OutputFmt::Hex,
+                            "bin" => output_format = OutputFmt::Binary,
+                            _ => {}
+                        }
+
                         continue;
                     }
 
@@ -201,6 +218,7 @@ impl Function {
             name,
             expression: resolved,
             parameter_count: parameter_names.len() as _,
+            output_format
         })
     }
 

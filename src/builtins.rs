@@ -37,9 +37,19 @@ pub fn resolve_builtin_fn_call(name: &str) -> Option<(BuiltinFnPtr, usize)> {
         "log10" => (log10 as BuiltinFnPtr, 1),
         "log2"  => (log2 as BuiltinFnPtr, 1),
         "avg"   => (avg as BuiltinFnPtr, usize::MAX),
+
+        // Output format specifiers
+        "dec" => (noop as BuiltinFnPtr, 1),
+        "bin" => (noop as BuiltinFnPtr, 1),
+        "hex" => (noop as BuiltinFnPtr, 1),
+        
         _ => return None,
     };
     Some((fn_ptr, param_count))
+}
+
+fn noop(parameters: &[Value], _precision_bits: u32) -> anyhow::Result<Value> {
+    Ok(parameters[0].clone())
 }
 
 fn sqrt(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {

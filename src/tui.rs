@@ -28,9 +28,9 @@ impl Validator for TuiHelper {
 
         let mut state = self.state.borrow_mut();
         match process_input(&mut state, ctx.input(), true) {
-            Ok(Some(val)) => Ok(ValidationResult::Valid(Some(format!(
+            Ok(Some((val, fmt))) => Ok(ValidationResult::Valid(Some(format!(
                 "{prefix}(Current result: {})",
-                stringify_output(val, true).unwrap()
+                stringify_output(val, fmt, true).unwrap()
             )))),
             Ok(None) => Ok(ValidationResult::Valid(None)),
             Err(e) => Ok(ValidationResult::Invalid(Some(format!("{prefix}({e})")))),

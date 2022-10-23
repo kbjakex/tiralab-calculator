@@ -3,7 +3,10 @@ use std::ops::Range;
 use anyhow::bail;
 use rug::ops::PowAssign;
 
-use crate::{state::Value, DEFAULT_PRECISION};
+use crate::{
+    state::{OutputFmt, Value},
+    DEFAULT_PRECISION,
+};
 
 /// Given the slice `full` and its subslice `part`, this computes the range `r`
 /// for which `full[r] == part`. `part` must be an actual subslice, otherwise this
@@ -17,21 +20,29 @@ pub fn subslice_range(full: &str, part: &str) -> Range<usize> {
 /// Converts a Value to a user-friendly string format, ready to be displayed to the user.
 /// If compact mode is used, only single-line outputs (no newlines) will be returned,
 /// meaning some information will be lost (cut off).
-pub fn stringify_output(value: Value, compact: bool) -> anyhow::Result<String> {
+pub fn stringify_output(value: Value, format: OutputFmt, compact: bool) -> anyhow::Result<String> {
     use std::fmt::Write;
+
+    let (radix, prefix, unit) = match format {
+        OutputFmt::Base10 => (10, "", "digits"),
+        OutputFmt::Binary => (2, "0b", "bits"),
+        OutputFmt::Hex => (16, "0x", "digits"),
+    };
+    let digits = if compact { 18 } else { 50 };
+
     let result = match value {
         Value::Decimal(value) => {
-            format!("≈ {}", float_to_string(&value))
+            format!("≈ {prefix}{}", float_to_string(&value, digits, radix))
         }
         Value::Rational(value) => {
             if value.is_integer() {
                 let mut formatted = String::new();
-                write!(&mut formatted, "= {value}").unwrap();
+                write!(&mut formatted, "= {prefix}{}", value.to_string_radix(radix)).unwrap();
 
                 if !compact && formatted.len() >= 10 {
-                    format!("{formatted} ({} digits)", formatted.len())
+                    format!("{formatted} ({} {unit}))", formatted.len())
                 } else {
-                    format!("{formatted}")
+                    formatted
                 }
             } else {
                 // Heuristic: if denominator is this big, it's probably not actually an exact result.
@@ -39,8 +50,12 @@ pub fn stringify_output(value: Value, compact: bool) -> anyhow::Result<String> {
                 // would only print the rational, which is not useful if it's wrong.
                 if (compact && value.denom() > &u32::MAX) || value.denom() > &u64::MAX {
                     format!(
-                        "≈ {}",
-                        float_to_string(&rational_to_decimal(&value, DEFAULT_PRECISION))
+                        "≈ {prefix}{}",
+                        float_to_string(
+                            &rational_to_decimal(&value, DEFAULT_PRECISION),
+                            digits,
+                            radix
+                        )
                     )
                 } else {
                     let (fract, floor) = value.clone().fract_floor(rug::Integer::new());
@@ -50,18 +65,32 @@ pub fn stringify_output(value: Value, compact: bool) -> anyhow::Result<String> {
                     if compact {
                         write!(
                             &mut result,
-                            "= {value} ≈ {}",
-                            float_to_string(&rational_to_decimal(&value, DEFAULT_PRECISION))
+                            "= {prefix}{} ≈ {prefix}{}",
+                            value.to_string_radix(radix),
+                            float_to_string(
+                                &rational_to_decimal(&value, DEFAULT_PRECISION),
+                                digits,
+                                radix
+                            )
                         )?;
                     } else {
-                        write!(&mut result, "= {value}")?;
+                        write!(&mut result, "= {prefix}{}", value.to_string_radix(radix))?;
                         if floor != 0 {
-                            write!(&mut result, "\n= {floor} + {fract}")?;
+                            write!(
+                                &mut result,
+                                "\n= {prefix}{} + {prefix}{}",
+                                floor.to_string_radix(radix),
+                                fract.to_string_radix(radix)
+                            )?;
                         }
                         write!(
                             &mut result,
-                            "\n≈ {}",
-                            float_to_string(&rational_to_decimal(&value, DEFAULT_PRECISION))
+                            "\n≈ {prefix}{}",
+                            float_to_string(
+                                &rational_to_decimal(&value, DEFAULT_PRECISION),
+                                digits,
+                                radix
+                            )
                         )?;
                     }
                     result
@@ -70,9 +99,12 @@ pub fn stringify_output(value: Value, compact: bool) -> anyhow::Result<String> {
         }
         Value::Complex(value) => {
             let mut result = String::new();
-            write!(&mut result, "≈ ")?;
+            write!(&mut result, "≈ {prefix}")?;
             let (real, imag) = value.into_real_imag();
-            let (real_s, imag_s) = (float_to_string(&real), float_to_string(&imag));
+            let (real_s, imag_s) = (
+                float_to_string(&real, digits, radix),
+                float_to_string(&imag, digits, radix),
+            );
             match (&real_s == "0", &imag_s == "0" || &imag_s == "-0") {
                 (true, true) => write!(&mut result, "0")?,
                 (true, false) => write!(&mut result, "{imag_s}i")?,
@@ -93,8 +125,8 @@ pub fn stringify_output(value: Value, compact: bool) -> anyhow::Result<String> {
 /// Converts a decimal value into a user-friendly string representation.
 /// The default formatting implemented for rug types can be very rough,
 /// preferring no leading zeros but adding numerous trailing zeros.
-pub fn float_to_string(float: &rug::Float) -> String {
-    let mut string = float.to_string();
+pub fn float_to_string(float: &rug::Float, digits: usize, radix: i32) -> String {
+    let mut string = float.to_string_radix(radix, None);
 
     let negative = float < &0.0;
 
@@ -119,13 +151,13 @@ pub fn float_to_string(float: &rug::Float) -> String {
         }
     }
 
-    // 2. Rug seems to output values at more resolution than it is accurate to, so (somewhat arbitrarily)
-    // limit precision to 50 digits even though technically 256 bits provide 77 digits, for two reasons:
+    // 2. Rug seems to output values at more resolution than it is accurate to. Technically 256 bits
+    // provide 77 digits, but limiting is useful for two reasons:
     // - floating-point errors accumulate, but in practice not enough to show up in the first 50 digits.
     // - by trimming here before the removal of trailing zeroes, values very close to a round number
     //   are reduced to the desired round number.
-    if string.len() > 50 {
-        string.drain(50..);
+    if string.len() > digits {
+        string.drain(digits..);
     }
 
     if string.contains('.') {

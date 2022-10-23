@@ -15,7 +15,7 @@ use parser::{
 };
 
 use rustyline::{Cmd, KeyCode, KeyEvent, Modifiers, Movement};
-use state::{CalculatorState, Value};
+use state::{CalculatorState, Value, OutputFmt};
 use tui::TuiHelper;
 use util::stringify_output;
 
@@ -24,11 +24,6 @@ use crate::{parser::parse_error, state::Function, util::subslice_range};
 pub const DEFAULT_PRECISION: u32 = 256; // in bits
 
 fn main() {
-    let args = std::env::args()
-        .skip(1)
-        .fold(String::new(), |result, string| result + &string);
-    let args = args.trim();
-
     let state = Rc::new(RefCell::new(CalculatorState::new_with_builtins()));
     let mut editor = rustyline::Editor::<TuiHelper>::new().unwrap();
     editor.bind_sequence(
@@ -39,29 +34,17 @@ fn main() {
         state: state.clone(),
     }));
 
-    // Use same evaluation logic when being invoked directly
-    if !args.is_empty() {
-        editor.readline_with_initial("", ("", args)).unwrap();
-    }
-
     // A simple REPL (read-eval-print-loop) interface
     loop {
         let line = editor.readline("\x1b[38;5;8m>\x1b[0m ");
         match line {
             Ok(line) => {
                 let line = line.trim();
-                if line.eq_ignore_ascii_case("exit") {
-                    break;
-                }
 
                 editor.add_history_entry(line);
 
                 let mut state = state.borrow_mut();
                 print_result(process_input(&mut state, &line, false), false);
-                if !args.is_empty() {
-                    return;
-                }
-
                 println!();
             }
             _ => return,
@@ -69,9 +52,9 @@ fn main() {
     }
 }
 
-fn print_result(result: ParseResult<Option<Value>>, compact: bool) {
+fn print_result(result: ParseResult<Option<(Value, OutputFmt)>>, compact: bool) {
     match result {
-        Ok(Some(output)) => println!("{}", stringify_output(output, compact).unwrap()),
+        Ok(Some((output, fmt))) => println!("{}", stringify_output(output, fmt, compact).unwrap()),
         Ok(None) => {}
         Err(e) => println!("{e:#}"),
     }
@@ -89,7 +72,7 @@ pub fn process_input(
     state: &mut CalculatorState,
     input: &str,
     dry_run: bool,
-) -> ParseResult<Option<Value>> {
+) -> ParseResult<Option<(Value, OutputFmt)>> {
     if input.trim().is_empty() {
         return Ok(None);
     }
@@ -108,11 +91,11 @@ pub fn process_input(
 
     // Neither a variable nor a function, so simply evaluate
     let mut postfix = parser::infix_to_postfix(input)?;
-    let result = eval_postfix(&mut postfix, state)?;
+    let (result, fmt) = eval_postfix(&mut postfix, state)?;
 
     state.set_variable("ans", result.clone(), dry_run).unwrap();
 
-    Ok(Some(result))
+    Ok(Some((result, fmt)))
 }
 
 /// Declare a function or a variable based on the input.
@@ -173,7 +156,7 @@ fn process_variable(
     let off = subslice_range(full, rest).start;
 
     let mut value_tokens = infix_to_postfix(rest).map_err(|e| offset(e, off))?;
-    let value = eval_postfix(&mut value_tokens, state).map_err(|e| offset(e, off))?;
+    let (value, _) = eval_postfix(&mut value_tokens, state).map_err(|e| offset(e, off))?;
 
     let old = state
         .set_variable(variable_name, value, dry_run)
@@ -297,12 +280,12 @@ fn parse_function_parameters(mut tokens: TokenIterator<'_>) -> ParseResult<Vec<&
 /// The function assumes `tokens` as a whole represents a valid postfix expression.
 /// # Errors
 /// Should an error occur, a human-readable message describing the issue is returned.
-fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> ParseResult<Value> {
+fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> ParseResult<(Value, OutputFmt)> {
     // Re-use evaluation implemented for functions
     let function = Function::from_name_and_tokens("".into(), 0..0, tokens, &[], state)?;
     match function.evaluate(state, &[], DEFAULT_PRECISION) {
         // TODO: don't hard-code precision
-        Ok(val) => Ok(val),
+        Ok(val) => Ok((val, function.output_format)),
         Err(e) => parse_error!(0..0, "{e}"),
     }
 }
@@ -311,8 +294,10 @@ fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> ParseResult<Va
 mod tests {
     use crate::{
         process_input,
-        state::{CalculatorState, Value},
+        state::{CalculatorState, Value, OutputFmt},
     };
+
+    
 
     #[test]
     fn test_empty_input_is_ok() {
@@ -326,11 +311,11 @@ mod tests {
     fn test_direct_eval_works() {
         let mut state = CalculatorState::new_with_builtins();
         assert_eq!(
-            Some(val(5.0)),
+            Some((val(5.0), OutputFmt::Base10)),
             process_input(&mut state, "5", false).unwrap()
         );
         assert_eq!(
-            Some(val(3.75)),
+            Some((val(3.75), OutputFmt::Base10)),
             process_input(&mut state, "5 * -(2 + -3) / -4 + 5", false).unwrap()
         );
     }
@@ -351,7 +336,7 @@ mod tests {
             process_input(&mut state, "variable = 1.234567", false).unwrap()
         );
         assert_eq!(
-            Some(Value::rational(1234567, 1000000)),
+            Some((Value::rational(1234567, 1000000), OutputFmt::Base10)),
             process_input(&mut state, "variable", false).unwrap()
         );
         assert!(process_input(&mut state, "variabl", false).is_err());
@@ -362,7 +347,7 @@ mod tests {
             process_input(&mut state, "variable=2", false).unwrap()
         );
         assert_eq!(
-            Some(val(2.0)),
+            Some((val(2.0), OutputFmt::Base10)),
             process_input(&mut state, "variable", false).unwrap()
         );
     }
@@ -384,14 +369,14 @@ mod tests {
 
         assert_eq!(None, process_input(&mut state, "f() = 5", false).unwrap());
         assert_eq!(
-            Some(val(5.0)),
+            Some((val(5.0), OutputFmt::Base10)),
             process_input(&mut state, "f()", false).unwrap()
         );
 
         assert_eq!(None, process_input(&mut state, "f(x) = 5x", false).unwrap());
         assert!(process_input(&mut state, "f()", false).is_err());
         assert_eq!(
-            Some(val(-25.0)),
+            Some((val(-25.0), OutputFmt::Base10)),
             process_input(&mut state, "f(-5)", false).unwrap()
         );
 
@@ -400,7 +385,7 @@ mod tests {
             process_input(&mut state, "g(x, y) = f(x) / f(y)", false).unwrap()
         );
         assert_eq!(
-            Some(val(-0.5)),
+            Some((val(-0.5), OutputFmt::Base10)),
             process_input(&mut state, "g(-2, 4)", false).unwrap()
         );
     }
