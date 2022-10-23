@@ -1,13 +1,17 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
-use rustyline::{highlight::Highlighter, validate::{Validator, ValidationResult}};
+use rustyline::{
+    highlight::Highlighter,
+    validate::{ValidationResult, Validator},
+};
 use rustyline_derive::{Completer, Helper, Hinter};
 
 use crate::{
+    builtins,
     parser::{ParserTokenKind, TokenIterator},
     process_input,
     state::{CalculatorState, Value},
-    DEFAULT_PRECISION, stringify_output, builtins,
+    stringify_output, DEFAULT_PRECISION,
 };
 
 #[derive(Completer, Helper, Hinter)]
@@ -16,8 +20,11 @@ pub struct TuiHelper {
 }
 
 impl Validator for TuiHelper {
-    fn validate(&self, ctx: &mut rustyline::validate::ValidationContext) -> rustyline::Result<rustyline::validate::ValidationResult> {
-        let prefix = "     ";
+    fn validate(
+        &self,
+        ctx: &mut rustyline::validate::ValidationContext,
+    ) -> rustyline::Result<rustyline::validate::ValidationResult> {
+        let prefix = "\t\t\t";
 
         let mut state = self.state.borrow_mut();
         match process_input(&mut state, ctx.input(), true) {
@@ -36,19 +43,26 @@ impl Validator for TuiHelper {
 }
 
 impl Highlighter for TuiHelper {
-    fn highlight<'l>(&self, line: &'l str, mut pos: usize, submit: bool) -> std::borrow::Cow<'l, str> {
+    fn highlight<'l>(
+        &self,
+        line: &'l str,
+        mut pos: usize,
+        submit: bool,
+    ) -> std::borrow::Cow<'l, str> {
         if pos > 0 && !matches!(line.as_bytes().get(pos), Some(b'(' | b')')) {
             pos -= 1;
         }
 
         let mut state = self.state.borrow_mut();
-        let (line, pos) = color_individual_glyphs(&line, pos, &mut state);
+        let (mut line, pos) = color_individual_glyphs(&line, pos, &mut state);
 
         if !submit {
-            Cow::Owned(highlight_matching_paren(line, pos))
-        } else {
-            Cow::Owned(line)
+            line = highlight_matching_paren(line, pos);
         }
+
+        line = highlight_mismatched_parens(&line);
+
+        Cow::Owned(line)
     }
 
     fn highlight_char(&self, _line: &str, _pos: usize) -> bool {
@@ -96,7 +110,6 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
 
     let mut tokens = TokenIterator::of(line, DEFAULT_PRECISION);
     let mut cursor = 0;
-    let mut prev_token = None;
     while let Some(token) = tokens.next() {
         let (start, end) = (cursor, tokens.position());
         let span = token.as_ref().map_or(start..end, |tok| tok.span.clone());
@@ -106,14 +119,13 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
         let token = match token {
             Ok(token) => token,
             Err(..) => {
-                // Unrecognized, but don't do error checking here.
+                // Unrecognized, but don't do error checking here - `process_input()` already outputs actual errors.
                 output += "\x1b[0m";
                 output += segment;
                 continue;
             }
         };
 
-        let kind = std::mem::discriminant(&token.kind);
         let color = match token.kind {
             ParserTokenKind::LeftParen | ParserTokenKind::RightParen => "\x1b[38;5;6m",
             ParserTokenKind::Function { name } => {
@@ -134,9 +146,9 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
             ParserTokenKind::Number(Value::Boolean(_)) => "\x1b[38;5;3m",
             _ => "\x1b[0m",
         };
-        if prev_token != Some(kind) {
-            output += color;
-        }
+
+        output += color;
+
         if span.start < error_span.end && span.end > error_span.start {
             let mut estart = error_span.start.saturating_sub(span.start);
             let mut eend = (estart + error_span.end - error_span.start).min(span.end - span.start);
@@ -148,10 +160,8 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
             output += "\x1b[0m";
             output += color;
             output += &segment[eend..];
-            prev_token = None;
         } else {
             output += segment;
-            prev_token = Some(kind);
         }
 
         // Found the segment the cursor was in: compute where it's now
@@ -196,7 +206,7 @@ fn highlight_matching_paren(line: String, pos: usize) -> String {
             }
 
             if stack == 0 && bytes[cursor] == b')' {
-                return highlight_parens(&line, pos, cursor);   
+                return highlight_parens(&line, pos, cursor);
             }
         }
         _ => {}
@@ -214,4 +224,50 @@ fn highlight_parens(line: &str, left: usize, mut right: usize) -> String {
     let (mid, right) = (&mid[1..], &right[1..]);
 
     format!("{left}\x1b[38;5;14;1m(\x1b[0;38;5;6m{mid}\x1b[1;38;5;14m)\x1b[0;38;5;6m{right}")
+}
+
+/// Rather than highlighting the paren that matches with the one next to the cursor like
+/// `highlight_matching_paren`, this colors all parens without a matching pair in red.
+fn highlight_mismatched_parens(line: &str) -> String {
+    let mut result = line.to_owned();
+
+    let mut stack = 0;
+    for (i, c) in line.bytes().enumerate().rev() {
+        if c == b'(' {
+            stack -= 1;
+        } else if c == b')' {
+            stack += 1;
+        } else {
+            continue;
+        }
+
+        if stack < 0 {
+            result.insert_str(i + 1, "\x1b[m");
+            result.insert_str(i, "\x1b[38;5;1m");
+            stack = 0;
+        }
+    }
+
+    let line = result.clone();
+    let mut stack = 0;
+    let mut offset = 0;
+    for (mut i, c) in line.bytes().enumerate() {
+        if c == b'(' {
+            stack += 1;
+        } else if c == b')' {
+            stack -= 1;
+        } else {
+            continue;
+        }
+
+        if stack < 0 {
+            i += offset;
+            result.insert_str(i + 1, "\x1b[m");
+            result.insert_str(i, "\x1b[38;5;1m");
+            offset += "\x1b[m\x1b[38;5;1m".len();
+            stack = 0;
+        }
+    }
+
+    result
 }

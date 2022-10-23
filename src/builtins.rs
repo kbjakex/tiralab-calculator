@@ -7,7 +7,8 @@ use rug::Assign;
 use crate::{
     operators::BinaryOperator,
     state::{Value, Variable},
-    DEFAULT_PRECISION, util::promote_to_common_type,
+    util::promote_to_common_type,
+    DEFAULT_PRECISION,
 };
 
 pub type BuiltinFnPtr = fn(&[Value], u32) -> anyhow::Result<Value>;
@@ -59,7 +60,6 @@ fn sqrt(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
 
 fn cbrt(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
     if parameters.len() != 1 {
-        // Typo for consistency :)
         bail!("cbrt() takes 1 parameters, 0 provided");
     }
 
@@ -92,6 +92,45 @@ fn avg(parameters: &[Value], precision_bits: u32) -> anyhow::Result<Value> {
     let result = BinaryOperator::Divide.apply(sum, Value::Rational(count), precision_bits)?;
 
     Ok(result)
+}
+
+fn floor(parameters: &[Value], _precision_bits: u32) -> anyhow::Result<Value> {
+    if parameters.len() != 1 {
+        bail!("floor() takes 1 parameters, 0 provided");
+    }
+
+    let rational = match parameters[0].clone() {
+        Value::Decimal(x) => x.floor().to_rational().unwrap(),
+        Value::Rational(x) => x.floor(),
+        other => bail!("floor() not defined for {}", other.type_name()),
+    };
+    Ok(Value::Rational(rational))
+}
+
+fn ceil(parameters: &[Value], _precision_bits: u32) -> anyhow::Result<Value> {
+    if parameters.len() != 1 {
+        bail!("ceil() takes 1 parameters, 0 provided");
+    }
+
+    let rational = match parameters[0].clone() {
+        Value::Decimal(x) => x.ceil().to_rational().unwrap(),
+        Value::Rational(x) => x.ceil(),
+        other => bail!("ceil() not defined for {}", other.type_name()),
+    };
+    Ok(Value::Rational(rational))
+}
+
+fn round(parameters: &[Value], _precision_bits: u32) -> anyhow::Result<Value> {
+    if parameters.len() != 1 {
+        bail!("round() takes 1 parameters, 0 provided");
+    }
+
+    let rational = match parameters[0].clone() {
+        Value::Decimal(x) => x.round().to_rational().unwrap(),
+        Value::Rational(x) => x.round(),
+        other => bail!("round() not defined for {}", other.type_name()),
+    };
+    Ok(Value::Rational(rational))
 }
 
 /// A helper to cut down on the boilerplate of declaring functions with minimal differences.
@@ -129,9 +168,6 @@ macro_rules! single_param_fn {
 // by converting to a decimal. This is lossy, but this done because the function
 // simply doesn't exist for rationals.
 
-single_param_fn!(floor, Rational, Decimal);
-single_param_fn!(round, Rational, Decimal);
-single_param_fn!(ceil, Rational, Decimal);
 single_param_fn!(abs, Rational, Decimal, Complex);
 single_param_fn!(sin, Decimal, Complex; rational_to_decimal);
 single_param_fn!(cos, Decimal, Complex; rational_to_decimal);

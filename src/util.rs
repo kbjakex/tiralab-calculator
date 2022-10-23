@@ -5,7 +5,6 @@ use rug::ops::PowAssign;
 
 use crate::{state::Value, DEFAULT_PRECISION};
 
-
 /// Given the slice `full` and its subslice `part`, this computes the range `r`
 /// for which `full[r] == part`. `part` must be an actual subslice, otherwise this
 /// makes no sense.
@@ -49,13 +48,18 @@ pub fn stringify_output(value: Value, compact: bool) -> anyhow::Result<String> {
                     let mut result = String::new();
 
                     if compact {
-                        write!(&mut result, "= {value} ≈ {}", float_to_string(&rational_to_decimal(&value, DEFAULT_PRECISION)))?;
+                        write!(
+                            &mut result,
+                            "= {value} ≈ {}",
+                            float_to_string(&rational_to_decimal(&value, DEFAULT_PRECISION))
+                        )?;
                     } else {
                         write!(&mut result, "= {value}")?;
                         if floor != 0 {
                             write!(&mut result, "\n= {floor} + {fract}")?;
                         }
-                        write!(&mut result,
+                        write!(
+                            &mut result,
                             "\n≈ {}",
                             float_to_string(&rational_to_decimal(&value, DEFAULT_PRECISION))
                         )?;
@@ -74,7 +78,7 @@ pub fn stringify_output(value: Value, compact: bool) -> anyhow::Result<String> {
                 (true, false) => write!(&mut result, "{imag_s}i")?,
                 (false, true) => write!(&mut result, "{real_s}")?,
                 (false, false) if imag < 0 => write!(&mut result, "{real_s} - {}i", &imag_s[1..])?,
-                (false, false) =>  write!(&mut result, "{real_s} + {imag_s}i")?
+                (false, false) => write!(&mut result, "{real_s} + {imag_s}i")?,
             };
             result
         }

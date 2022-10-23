@@ -1,7 +1,10 @@
 use anyhow::{bail, Context};
 use rug::ops::Pow;
 
-use crate::{state::Value, util::{promote_to_common_type, rational_pow, decimal_to_complex, complex_pow}};
+use crate::{
+    state::Value,
+    util::{complex_pow, decimal_to_complex, promote_to_common_type, rational_pow},
+};
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,21 +25,68 @@ pub enum BinaryOperator {
 
     LogicalAnd,
     LogicalOr,
+
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitLeftShift,
+    BitRightShift,
 }
 
 impl BinaryOperator {
+    /// If the array starts with the characters representing a binary
+    /// operator, that operator is returned along with its byte length
+    pub fn from_chars(chars: &[u8]) -> Option<(BinaryOperator, usize)> {
+        use BinaryOperator::*;
+
+        let result = match chars {
+            &[b'+', ..] => (Add, 1),
+            &[b'-', ..] => (Subtract, 1),
+            &[b'*', ..] => (Multiply, 1),
+            &[b'/', ..] => (Divide, 1),
+            &[b'%', ..] => (Remainder, 1),
+            &[b'^', ..] => (Power, 1),
+
+            &[b'<', b'<', ..] => (BitLeftShift, 2),
+            &[b'>', b'>', ..] => (BitRightShift, 2),
+
+            &[b'<', b'=', ..] => (LequalTo, 2),
+            &[b'>', b'=', ..] => (GequalTo, 2),
+            &[b'=', b'=', ..] => (EqualTo, 2),
+            &[b'!', b'=', ..] => (NequalTo, 2),
+            &[b'<', ..] => (LessThan, 1),
+            &[b'>', ..] => (GreaterThan, 1),
+
+            &[b'&', b'&', ..] => (LogicalAnd, 2),
+            &[b'|', b'|', ..] => (LogicalOr, 2),
+
+            &[b'&', ..] => (BitAnd, 1),
+            &[b'|', ..] => (BitOr, 1),
+            &[b'x', b'o', b'r', ..] => (BitXor, 3),
+
+            _ => return None,
+        };
+
+        Some(result)
+    }
+
     pub const fn precedence(self) -> i32 {
         use BinaryOperator::*;
         // See https://en.cppreference.com/w/c/language/operator_precedence
         match self {
             LogicalOr => 0,
             LogicalAnd => 1,
-            EqualTo => 2,
-            NequalTo => 2,
-            LessThan => 3,
-            LequalTo => 3,
-            GreaterThan => 3,
-            GequalTo => 3,
+            BitOr => 2,
+            BitXor => 3,
+            BitAnd => 4,
+            EqualTo => 5,
+            NequalTo => 5,
+            LessThan => 6,
+            LequalTo => 6,
+            GreaterThan => 6,
+            GequalTo => 6,
+            BitLeftShift => 7,
+            BitRightShift => 7,
             Add => 4,
             Subtract => 4,
             Divide => 5,
@@ -88,6 +138,17 @@ impl BinaryOperator {
                     GequalTo => return Ok(Boolean(lhs >= rhs)),
                     EqualTo => return Ok(Boolean(lhs == rhs)),
                     NequalTo => return Ok(Boolean(lhs != rhs)),
+
+                    other if lhs.is_integer() && rhs.is_integer() => match other {
+                        BitAnd => rug::Rational::from(lhs.numer() & rhs.numer()),
+                        BitOr => rug::Rational::from(lhs.numer() | rhs.numer()),
+                        BitXor => rug::Rational::from(lhs.numer() ^ rhs.numer()),
+                        BitLeftShift if rhs < i32::MAX => rug::Rational::from(lhs.numer() << rhs.numer().to_i32().unwrap()),
+                        BitLeftShift => bail!("Left shift amount '{}' is too large", rhs.numer()),
+                        BitRightShift if rhs < i32::MAX => rug::Rational::from(lhs.numer() >> rhs.numer().to_i32().unwrap()),
+                        BitRightShift => bail!("Right shift amount '{}' is too large", rhs.numer()),
+                        _ => unreachable!()
+                    }
 
                     other => bail!("'{}' is not defined for real numbers", other.display_name()),
                 };
@@ -145,10 +206,11 @@ impl BinaryOperator {
             }
             (Boolean(lhs), Boolean(rhs)) => {
                 let result = match self {
-                    LogicalOr => lhs || rhs,
-                    LogicalAnd => lhs && rhs,
+                    LogicalOr | BitOr => lhs || rhs,
+                    LogicalAnd | BitAnd => lhs && rhs,
                     EqualTo => lhs == rhs,
-                    NequalTo => lhs != rhs,
+                    NequalTo | BitXor => lhs != rhs,
+
                     other => bail!("'{}' is not defined for booleans", other.display_name()),
                 };
                 Ok(Boolean(result))
@@ -157,7 +219,7 @@ impl BinaryOperator {
         }
     }
 
-    fn display_name(self) -> &'static str {
+    pub fn display_name(self) -> &'static str {
         use BinaryOperator::*;
         match self {
             Add => "+",
@@ -176,6 +238,12 @@ impl BinaryOperator {
 
             LogicalAnd => "&&",
             LogicalOr => "||",
+
+            BitAnd => "&",
+            BitOr => "|",
+            BitXor => "xor",
+            BitLeftShift => "<<",
+            BitRightShift => ">>",
         }
     }
 }
@@ -184,6 +252,7 @@ impl BinaryOperator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOperator {
     Negate,
+    Not,
 }
 
 impl UnaryOperator {
@@ -197,6 +266,9 @@ impl UnaryOperator {
             (Negate, Boolean(_)) => {
                 bail!("Can't negate a boolean with `-`! Prefix with `!` to invert instead.")
             }
+
+            (Not, Boolean(x)) => Ok(Boolean(!x)),
+            (Not, other) => bail!("`!` is not defined for {}", other.type_name()),
         }
     }
 }

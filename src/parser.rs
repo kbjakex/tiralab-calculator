@@ -6,7 +6,7 @@ use thiserror::Error;
 use Result;
 
 use crate::{
-    operators::{BinaryOperator, UnaryOperator},
+    operators::{self, BinaryOperator, UnaryOperator},
     state::Value,
     DEFAULT_PRECISION,
 };
@@ -134,7 +134,7 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
         let token = token?; // Check for parsing errors
         let span = token.span.clone();
         last_span = span.clone();
-        
+
         match token.kind {
             Number(ref value) => {
                 assert_value_is_valid_here(&token, &last_token)?;
@@ -165,13 +165,28 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
                 }
 
                 if matches!(last_token, Some(LeftParen))
-                    && !matches!(&operators[..], &[.., ParserToken{ kind: ParserTokenKind::Function { .. }, ..}, _])
+                    && !matches!(
+                        &operators[..],
+                        &[
+                            ..,
+                            ParserToken {
+                                kind: ParserTokenKind::Function { .. },
+                                ..
+                            },
+                            _
+                        ]
+                    )
                 {
+                    let span = span.start.saturating_sub(1)..span.end;
                     parse_error!(span, "Empty parentheses is invalid");
                 }
 
                 if matches!(last_token, Some(BinaryOperator(..) | UnaryOperator(..))) {
-                    parse_error!(last_span, "`)` is not valid after an operator (`{}`)", last_token.unwrap());
+                    parse_error!(
+                        last_span,
+                        "`)` is not valid after an operator (`{}`)",
+                        last_token.unwrap()
+                    );
                 }
 
                 pop_until_lparen(&mut operators, &mut output);
@@ -182,22 +197,29 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
                 }
                 // If on top of operators is a function, that means this ) marks the end of the
                 // function's parameters.
-                if let Some(ParserToken{ kind: Function { name }, .. }) = operators.last() {
+                if let Some(ParserToken {
+                    kind: Function { name },
+                    ..
+                }) = operators.last()
+                {
                     let mut parameter_count = parameter_counts.pop().unwrap();
                     if !matches!(last_token, Some(LeftParen)) {
                         parameter_count += 1;
                     }
 
-                    output.push(Token::new(span, TokenKind::Function {
-                        name,
-                        parameter_count,
-                    }));
+                    output.push(Token::new(
+                        span,
+                        TokenKind::Function {
+                            name,
+                            parameter_count,
+                        },
+                    ));
                     operators.pop();
                 }
             }
 
             UnaryOperator(..) => {
-                if matches!(last_token, Some(UnaryOperator(..))) {
+                if matches!(last_token, Some(UnaryOperator(UnOp::Negate))) {
                     parse_error!(
                         span,
                         "Two (unary) operators in a row (`{token}` and `{}`)",
@@ -223,7 +245,6 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
                     }
                     operators.push(ParserToken::new(span.clone(), UnaryOperator(UnOp::Negate)));
                     last_token = Some(UnaryOperator(UnOp::Negate));
-                    last_span = span;
                     continue;
                 }
 
@@ -252,7 +273,10 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
                             if (left_associative && precedence <= top_precedence)
                                 || (!left_associative && precedence < top_precedence)
                             {
-                                output.push(Token::new(span, TokenKind::BinaryOperator(*top_of_stack)));
+                                output.push(Token::new(
+                                    span,
+                                    TokenKind::BinaryOperator(*top_of_stack),
+                                ));
                                 operators.pop();
                             } else {
                                 break;
@@ -278,7 +302,11 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
                 }
 
                 if matches!(last_token, Some(BinaryOperator(..) | UnaryOperator(..))) {
-                    parse_error!(last_span, "Parameter ends with an operator (`{}`)", last_token.unwrap());
+                    parse_error!(
+                        last_span,
+                        "Parameter ends with an operator (`{}`)",
+                        last_token.unwrap()
+                    );
                 }
 
                 if let Some(count) = parameter_counts.last_mut() {
@@ -313,7 +341,8 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
 
     // No tokens should remain
     if !operators.is_empty() {
-        parse_error!(0..last_span.end, "Missing a closing `)`");
+        let span = last_span.end.saturating_sub(1)..last_span.end;
+        parse_error!(span, "Missing a closing `)`");
     }
 
     Ok(output)
@@ -324,18 +353,29 @@ fn shunting_yard<'a>(tokens: &mut TokenIterator<'a>) -> ParseResult<Vec<Token<'a
 fn pop_until_lparen<'a>(operators: &mut Vec<ParserToken<'a>>, output: &mut Vec<Token<'a>>) {
     loop {
         let top = match operators.last() {
-            None | Some(ParserToken{ kind: ParserTokenKind::LeftParen, .. }) => return,
+            None
+            | Some(ParserToken {
+                kind: ParserTokenKind::LeftParen,
+                ..
+            }) => return,
             _ => operators.pop().unwrap(),
         };
 
         let span = top.span;
         match top.kind {
-            ParserTokenKind::Number(value) => output.push(Token::new(span, TokenKind::Number(value))),
-            ParserTokenKind::Variable { name } => output.push(Token::new(span, TokenKind::Variable { name })),
-            ParserTokenKind::Function { name } => output.push(Token::new(span, TokenKind::Function {
-                name,
-                parameter_count: 0,
-            })),
+            ParserTokenKind::Number(value) => {
+                output.push(Token::new(span, TokenKind::Number(value)))
+            }
+            ParserTokenKind::Variable { name } => {
+                output.push(Token::new(span, TokenKind::Variable { name }))
+            }
+            ParserTokenKind::Function { name } => output.push(Token::new(
+                span,
+                TokenKind::Function {
+                    name,
+                    parameter_count: 0,
+                },
+            )),
             ParserTokenKind::BinaryOperator(operator) => {
                 output.push(Token::new(span, TokenKind::BinaryOperator(operator)))
             }
@@ -387,24 +427,10 @@ impl std::fmt::Display for ParserTokenKind<'_> {
             ParserTokenKind::Variable { name } => f.write_str(name),
             ParserTokenKind::Function { name } => f.write_str(name),
             ParserTokenKind::Delimiter => f.write_str(","),
-            ParserTokenKind::BinaryOperator(op) => match op {
-                BinaryOperator::Add => f.write_str("+"),
-                BinaryOperator::Subtract => f.write_str("-"),
-                BinaryOperator::Multiply => f.write_str("*"),
-                BinaryOperator::Divide => f.write_str("/"),
-                BinaryOperator::Remainder => f.write_str("%"),
-                BinaryOperator::Power => f.write_str("^"),
-                BinaryOperator::LessThan => f.write_str("<"),
-                BinaryOperator::LequalTo => f.write_str("<="),
-                BinaryOperator::GreaterThan => f.write_str(">"),
-                BinaryOperator::GequalTo => f.write_str(">="),
-                BinaryOperator::EqualTo => f.write_str("=="),
-                BinaryOperator::NequalTo => f.write_str("!="),
-                BinaryOperator::LogicalAnd => f.write_str("&&"),
-                BinaryOperator::LogicalOr => f.write_str("||"),
-            },
+            ParserTokenKind::BinaryOperator(op) => f.write_str(op.display_name()),
             ParserTokenKind::UnaryOperator(op) => match op {
                 UnaryOperator::Negate => f.write_str("-"),
+                UnaryOperator::Not => f.write_str("!"),
             },
             ParserTokenKind::LeftParen => f.write_str("("),
             ParserTokenKind::RightParen => f.write_str(")"),
@@ -611,6 +637,13 @@ impl<'a> TokenIterator<'a> {
     /// This method assumes that there are no spaces at the cursor position and that
     /// there are still tokens to be read.
     fn read_token(&mut self) -> ParseResult<ParserTokenKind<'a>> {
+        if let Some((operator, advance)) =
+            operators::BinaryOperator::from_chars(&self.source[self.index..])
+        {
+            self.index += advance;
+            return Ok(ParserTokenKind::BinaryOperator(operator));
+        }
+
         // Inject implicit * for `2x`
         if std::mem::replace(&mut self.last_was_number, false)
             && self.source[self.index].is_ascii_alphabetic()
@@ -618,77 +651,63 @@ impl<'a> TokenIterator<'a> {
             return Ok(ParserTokenKind::BinaryOperator(BinaryOperator::Multiply));
         }
 
-        let (result, advance) = match (self.source[self.index], self.source.get(self.index + 1)) {
-            (b'(', _) => (ParserTokenKind::LeftParen, 1),
-            (b')', _) => (ParserTokenKind::RightParen, 1),
-            (b'+', _) => (ParserTokenKind::BinaryOperator(BinaryOperator::Add), 1),
-            (b'-', _) => (ParserTokenKind::BinaryOperator(BinaryOperator::Subtract), 1),
-            (b'*', _) => (ParserTokenKind::BinaryOperator(BinaryOperator::Multiply), 1),
-            (b'/', _) => (ParserTokenKind::BinaryOperator(BinaryOperator::Divide), 1),
-            (b'%', _) => (
-                ParserTokenKind::BinaryOperator(BinaryOperator::Remainder),
-                1,
-            ),
-            (b'^', _) => (ParserTokenKind::BinaryOperator(BinaryOperator::Power), 1),
-            (b',', _) => (ParserTokenKind::Delimiter, 1),
-            (b'|', Some(b'|')) => (
-                ParserTokenKind::BinaryOperator(BinaryOperator::LogicalOr),
-                2,
-            ),
-            (b'&', Some(b'&')) => (
-                ParserTokenKind::BinaryOperator(BinaryOperator::LogicalAnd),
-                2,
-            ),
-            (b'<', Some(b'=')) => (ParserTokenKind::BinaryOperator(BinaryOperator::LequalTo), 2),
-            (b'>', Some(b'=')) => (ParserTokenKind::BinaryOperator(BinaryOperator::GequalTo), 2),
-            (b'=', Some(b'=')) => (ParserTokenKind::BinaryOperator(BinaryOperator::EqualTo), 2),
-            (b'!', Some(b'=')) => (ParserTokenKind::BinaryOperator(BinaryOperator::NequalTo), 2),
-            (b'<', _) => (ParserTokenKind::BinaryOperator(BinaryOperator::LessThan), 1),
-            (b'>', _) => (
-                ParserTokenKind::BinaryOperator(BinaryOperator::GreaterThan),
-                1,
-            ),
+        let c = self.source[self.index];
+        if c == b'!' {
+            self.index += 1;
+            return Ok(ParserTokenKind::UnaryOperator(UnaryOperator::Not));
+        }
+        if c == b'(' {
+            self.index += 1;
+            return Ok(ParserTokenKind::LeftParen);
+        }
+        if c == b')' {
+            self.index += 1;
+            return Ok(ParserTokenKind::RightParen);
+        }
+        if c == b',' {
+            self.index += 1;
+            return Ok(ParserTokenKind::Delimiter);
+        }
 
-            (c, _) => {
-                if c == b'.' || c.is_ascii_digit() {
-                    return Ok(ParserTokenKind::Number(self.read_number()?));
-                }
-                if c.is_ascii_alphabetic() {
-                    let name = self.read_identifier();
-                    
-                    let mut next_index = self.index;
-                    while self.source.get(next_index).filter(|&&c| c.is_ascii_whitespace()).is_some() {
-                        next_index += 1;
-                    }
+        if c == b'.' || c.is_ascii_digit() {
+            return Ok(ParserTokenKind::Number(self.read_number()?));
+        }
+        if c.is_ascii_alphabetic() {
+            let name = self.read_identifier();
 
-                    if self.source.get(next_index) == Some(&b'(') {
-                        self.index = next_index;
-                        return Ok(ParserTokenKind::Function { name });
-                    }
-
-                    if name == "true" {
-                        return Ok(ParserTokenKind::Number(Value::Boolean(true)));
-                    }
-                    if name == "false" {
-                        return Ok(ParserTokenKind::Number(Value::Boolean(false)));
-                    }
-
-                    return Ok(ParserTokenKind::Variable { name });
-                }
-
-                self.index += 1;
-                let pos = self.index;
-                parse_error!(
-                    pos - 1..pos,
-                    "Invalid token `{}` (at `{}`)",
-                    c as char,
-                    unsafe { std::mem::transmute::<&BStr, &str>(&self.source[self.index - 1..]) }
-                );
+            let mut next_index = self.index;
+            while self
+                .source
+                .get(next_index)
+                .filter(|&&c| c.is_ascii_whitespace())
+                .is_some()
+            {
+                next_index += 1;
             }
-        };
 
-        self.index += advance;
-        Ok(result)
+            if self.source.get(next_index) == Some(&b'(') {
+                self.index = next_index;
+                return Ok(ParserTokenKind::Function { name });
+            }
+
+            if name == "true" {
+                return Ok(ParserTokenKind::Number(Value::Boolean(true)));
+            }
+            if name == "false" {
+                return Ok(ParserTokenKind::Number(Value::Boolean(false)));
+            }
+
+            return Ok(ParserTokenKind::Variable { name });
+        }
+
+        self.index += 1;
+        let pos = self.index;
+        parse_error!(
+            pos - 1..pos,
+            "Unexpected token `{}` (at `{}`)",
+            c as char,
+            unsafe { std::mem::transmute::<&BStr, &str>(&self.source[self.index - 1..]) }
+        );
     }
 }
 

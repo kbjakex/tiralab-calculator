@@ -10,8 +10,8 @@ pub mod util;
 use std::{cell::RefCell, rc::Rc};
 
 use parser::{
-    infix_to_postfix, make_parse_error, ParseResult, ParserToken, ParserTokenKind, Token,
-    TokenIterator, offset,
+    infix_to_postfix, make_parse_error, offset, ParseResult, ParserToken, ParserTokenKind, Token,
+    TokenIterator,
 };
 
 use rustyline::{Cmd, KeyCode, KeyEvent, Modifiers, Movement};
@@ -218,7 +218,8 @@ fn process_function(
         rest,
         &parameters,
         state,
-    ).map_err(|e| offset(e, off))?;
+    )
+    .map_err(|e| offset(e, off))?;
 
     if dry_run {
         return Ok(());
@@ -263,7 +264,8 @@ fn parse_function_parameters(mut tokens: TokenIterator<'_>) -> ParseResult<Vec<&
         } else {
             // `value` is asserted to be non-empty before calling this function, which means
             // there has to be at least one token before this can happen.
-            let span = prev_token.unwrap().span;
+            let position = TokenIterator::position(&tokens);
+            let span = position.saturating_sub(1)..position + 1;
             parse_error!(span, "Missing closing ) for function declaration");
         }
     }
