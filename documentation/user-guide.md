@@ -1,6 +1,6 @@
 ## User guide
 
-The prebuilt releases for Windows & Linux can be found [here](https://github.com/kbjakex/tiralab-calculator/releases). Alternatively, here are the steps to build & run the program yourself:
+The prebuilt releases can be found [here](https://github.com/kbjakex/tiralab-calculator/releases). Alternatively, here are the steps to build & run the program yourself:
 
 1. Install the Rust language if not already installed. Installation instructions can be found from the [official website](https://www.rust-lang.org/learn/get-started).
 (Should be a very painless process!)
