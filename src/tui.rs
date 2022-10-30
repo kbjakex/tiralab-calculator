@@ -8,10 +8,9 @@ use rustyline_derive::{Completer, Helper, Hinter};
 
 use crate::{
     builtins,
-    parser::{ParserTokenKind, TokenIterator},
     process_input,
     state::{CalculatorState, Value},
-    stringify_output, DEFAULT_PRECISION,
+    stringify_output, PRECISION, util::ansi, tokenizer::{TokenIterator, ParserTokenKind},
 };
 
 #[derive(Completer, Helper, Hinter)]
@@ -29,11 +28,11 @@ impl Validator for TuiHelper {
         let mut state = self.state.borrow_mut();
         match process_input(&mut state, ctx.input(), true) {
             Ok(Some((val, fmt))) => Ok(ValidationResult::Valid(Some(format!(
-                "{prefix}(Current result: {})",
+                "{prefix}(Current result {})",
                 stringify_output(val, fmt, true).unwrap()
             )))),
             Ok(None) => Ok(ValidationResult::Valid(None)),
-            Err(e) => Ok(ValidationResult::Invalid(Some(format!("{prefix}({e})")))),
+            Err(e) => Ok(ValidationResult::Valid(Some(format!("{prefix}({e})")))),
         }
     }
 
@@ -108,7 +107,7 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
 
     let mut new_pos = pos;
 
-    let mut tokens = TokenIterator::of(line, DEFAULT_PRECISION);
+    let mut tokens = TokenIterator::of(line, PRECISION);
     let mut cursor = 0;
     while let Some(token) = tokens.next() {
         let (start, end) = (cursor, tokens.position());
@@ -120,31 +119,31 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
             Ok(token) => token,
             Err(..) => {
                 // Unrecognized, but don't do error checking here - `process_input()` already outputs actual errors.
-                output += "\x1b[0m";
+                output += ansi::RESET;
                 output += segment;
                 continue;
             }
         };
 
         let color = match token.kind {
-            ParserTokenKind::LeftParen | ParserTokenKind::RightParen => "\x1b[38;5;6m",
+            ParserTokenKind::LeftParen | ParserTokenKind::RightParen => ansi::fg::CYAN,
             ParserTokenKind::Function { name } => {
                 if builtins::resolve_builtin_fn_call(name).is_some() {
-                    "\x1b[38;5;12;1m"
+                    ansi::fg::BLUE_BOLD
                 } else {
-                    "\x1b[38;5;12m"
+                    ansi::fg::BLUE
                 }
             }
             ParserTokenKind::Variable { name } => {
                 if state.variables.contains_key(name) {
-                    "\x1b[38;5;13;1m" // bold constants
+                    ansi::fg::PURPLE_BOLD
                 } else {
-                    "\x1b[38;5;13m"
+                    ansi::fg::PURPLE
                 }
             }
-            ParserTokenKind::BinaryOperator(..) => "\x1b[38;5;248m",
-            ParserTokenKind::Number(Value::Boolean(_)) => "\x1b[38;5;3m",
-            _ => "\x1b[0m",
+            ParserTokenKind::BinaryOperator(..) => ansi::fg::LIGHT_GRAY_248,
+            ParserTokenKind::Number(Value::Boolean(_)) => ansi::fg::GOLD_BOLD,
+            _ => ansi::RESET,
         };
 
         output += color;
@@ -155,9 +154,9 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
             estart += span.start - start;
             eend += span.start - start;
             output += &segment[..estart];
-            output += "\x1b[48;5;52m";
+            output += ansi::bg::DARK_RED;
             output += &segment[estart..eend];
-            output += "\x1b[0m";
+            output += ansi::RESET;
             output += color;
             output += &segment[eend..];
         } else {
@@ -170,7 +169,7 @@ fn color_individual_glyphs(line: &str, pos: usize, state: &mut CalculatorState) 
         }
     }
 
-    (output + "\x1b[0m", new_pos)
+    (output + ansi::RESET, new_pos)
 }
 
 fn highlight_matching_paren(line: String, pos: usize) -> String {
@@ -223,7 +222,8 @@ fn highlight_parens(line: &str, left: usize, mut right: usize) -> String {
     // Skip the actual parens
     let (mid, right) = (&mid[1..], &right[1..]);
 
-    format!("{left}\x1b[38;5;14;1m(\x1b[0;38;5;6m{mid}\x1b[1;38;5;14m)\x1b[0;38;5;6m{right}")
+    use ansi::fg::{LIGHT_CYAN_BOLD, CYAN};
+    format!("{left}{LIGHT_CYAN_BOLD}({CYAN}{mid}{LIGHT_CYAN_BOLD}){CYAN}{right}")
 }
 
 /// Rather than highlighting the paren that matches with the one next to the cursor like
@@ -242,8 +242,8 @@ fn highlight_mismatched_parens(line: &str) -> String {
         }
 
         if stack < 0 {
-            result.insert_str(i + 1, "\x1b[m");
-            result.insert_str(i, "\x1b[38;5;1m");
+            result.insert_str(i + 1, ansi::RESET);
+            result.insert_str(i, ansi::fg::RED);
             stack = 0;
         }
     }
@@ -262,9 +262,9 @@ fn highlight_mismatched_parens(line: &str) -> String {
 
         if stack < 0 {
             i += offset;
-            result.insert_str(i + 1, "\x1b[m");
-            result.insert_str(i, "\x1b[38;5;1m");
-            offset += "\x1b[m\x1b[38;5;1m".len();
+            result.insert_str(i + 1, ansi::RESET);
+            result.insert_str(i, ansi::fg::RED);
+            offset += ansi::RESET.len() + ansi::fg::RED.len();
             stack = 0;
         }
     }

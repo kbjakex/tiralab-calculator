@@ -1,29 +1,41 @@
 #![warn(clippy::all)]
+#![cfg_attr(coverage_nightly, feature(no_coverage))]
+
+// For the reader:
+// All functions marked with `#[cfg_attr(coverage, no_coverage)]` are excluded from
+// code coverage, as they are either not meaningful to test (such as implementation of the Display trait)
+// or they are user interface code.
 
 mod builtins;
 pub mod operators;
-pub mod parser;
+pub mod infix_to_postfix;
 pub mod state;
 pub mod tui;
 pub mod util;
+pub mod tokenizer;
 
 use std::{cell::RefCell, rc::Rc};
 
-use parser::{
-    infix_to_postfix, make_parse_error, offset, ParseResult, ParserToken, ParserTokenKind, Token,
-    TokenIterator,
+use infix_to_postfix::{
+    infix_to_postfix, make_parse_error, offset, ParseResult, Token,
 };
 
 use rustyline::{Cmd, KeyCode, KeyEvent, Modifiers, Movement};
 use state::{CalculatorState, Value, OutputFmt};
+use tokenizer::{TokenIterator, ParserTokenKind, ParserToken};
 use tui::TuiHelper;
-use util::stringify_output;
+use util::{stringify_output, ansi::fg};
 
-use crate::{parser::parse_error, state::Function, util::subslice_range};
+use crate::{infix_to_postfix::parse_error, state::Function, util::subslice_range};
 
-pub const DEFAULT_PRECISION: u32 = 256; // in bits
+/// The precision used for decimal (approximate) calculations, in bits.
+pub const PRECISION: u32 = 256;
 
+#[cfg_attr(coverage, no_coverage)]
 fn main() {
+    // The state has to be wrapped in a Rc-RefCell, because the TUI controller needs to have
+    // mutable access to it as well, and Rust can't tell at compile-time that it is indeed safe
+    // to share it mutably. Rust does still enforce the safety, but at runtime.
     let state = Rc::new(RefCell::new(CalculatorState::new_with_builtins()));
     let mut editor = rustyline::Editor::<TuiHelper>::new().unwrap();
     editor.bind_sequence(
@@ -36,27 +48,23 @@ fn main() {
 
     // A simple REPL (read-eval-print-loop) interface
     loop {
-        let line = editor.readline("\x1b[38;5;8m>\x1b[0m ");
+        let line = editor.readline(&(fg::GRAY.to_string() + "> "));
         match line {
             Ok(line) => {
                 let line = line.trim();
-
                 editor.add_history_entry(line);
 
                 let mut state = state.borrow_mut();
-                print_result(process_input(&mut state, &line, false), false);
+
+                match process_input(&mut state, &line, false) {
+                    Ok(Some((output, fmt))) => println!("{}", stringify_output(output, fmt, false).unwrap()),
+                    Err(e) => println!("{e:#}"),
+                    _ => {}
+                }
                 println!();
             }
             _ => return,
         }
-    }
-}
-
-fn print_result(result: ParseResult<Option<(Value, OutputFmt)>>, compact: bool) {
-    match result {
-        Ok(Some((output, fmt))) => println!("{}", stringify_output(output, fmt, compact).unwrap()),
-        Ok(None) => {}
-        Err(e) => println!("{e:#}"),
     }
 }
 
@@ -90,7 +98,7 @@ pub fn process_input(
     }
 
     // Neither a variable nor a function, so simply evaluate
-    let mut postfix = parser::infix_to_postfix(input)?;
+    let mut postfix = infix_to_postfix::infix_to_postfix(input)?;
     let (result, fmt) = eval_postfix(&mut postfix, state)?;
 
     state.set_variable("ans", result.clone(), dry_run).unwrap();
@@ -110,7 +118,7 @@ fn process_variable_or_function(
     if start.is_empty() {
         parse_error!(0..1, "Syntax error: can't start with a `=`");
     }
-    let mut tokens = TokenIterator::of(start, DEFAULT_PRECISION);
+    let mut tokens = TokenIterator::of(start, PRECISION);
 
     // 1. Variable and function should both begin with what is a valid variable name
     let identifier_token = tokens.next().unwrap()?;
@@ -283,7 +291,7 @@ fn parse_function_parameters(mut tokens: TokenIterator<'_>) -> ParseResult<Vec<&
 fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> ParseResult<(Value, OutputFmt)> {
     // Re-use evaluation implemented for functions
     let function = Function::from_name_and_tokens("".into(), 0..0, tokens, &[], state)?;
-    match function.evaluate(state, &[], DEFAULT_PRECISION) {
+    match function.evaluate(state, &[], PRECISION) {
         // TODO: don't hard-code precision
         Ok(val) => Ok((val, function.output_format)),
         Err(e) => parse_error!(0..0, "{e}"),
@@ -296,8 +304,6 @@ mod tests {
         process_input,
         state::{CalculatorState, Value, OutputFmt},
     };
-
-    
 
     #[test]
     fn test_empty_input_is_ok() {

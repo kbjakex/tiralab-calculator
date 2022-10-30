@@ -2,9 +2,7 @@
 # tiralab-calculator
 A scientific calculator University project
 
-<img src="https://raw.githubusercontent.com/kbjakex/tiralab-calculator/main/documentation/images/calculator.png" width="300">
-
-For the peer reviews: feel free to reach out for any questions or concerns or such on Discord - PM jetp250#8243 through [The Programmer's Hangout](https://discord.gg/programming).
+<img src="https://raw.githubusercontent.com/kbjakex/tiralab-calculator/main/documentation/images/calculator.png" width="550">
 
 ### Documentation
 
@@ -14,7 +12,8 @@ For the peer reviews: feel free to reach out for any questions or concerns or su
 
 ### Project status
 
-The original goals were met, and the project is currently being expanded: a simple type system is being introduced for arbitrary-precision calculation, boolean operations and exact/complex number computation. At the moment, this lacks testing, and built-in functions remain to be implemented (only sqrt() is in).
+The project is done. Type system is integrated & tested, all planned operators are there, most important functions are there,
+constants are there, the user interface is polished, a _lot_ of testing (both unit and manual) has been done.
 
 ### Rust version
 

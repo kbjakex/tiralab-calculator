@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Subtract,
@@ -87,12 +87,12 @@ impl BinaryOperator {
             GequalTo => 6,
             BitLeftShift => 7,
             BitRightShift => 7,
-            Add => 4,
-            Subtract => 4,
-            Divide => 5,
-            Multiply => 5,
-            Remainder => 5,
-            Power => 6,
+            Add => 8,
+            Subtract => 8,
+            Divide => 9,
+            Multiply => 9,
+            Remainder => 9,
+            Power => 10,
         }
     }
 
@@ -106,7 +106,7 @@ impl BinaryOperator {
         use BinaryOperator::*;
         use Value::*;
 
-        if matches!(self, Divide) {
+        if matches!(self, Divide | Remainder) {
             // Check for div by zero
             let dividing_by_zero = match &rhs {
                 Decimal(x) => x == &0,
@@ -122,6 +122,11 @@ impl BinaryOperator {
         let (lhs, rhs) = promote_to_common_type(&lhs, &rhs, precision_bits)
             .with_context(|| format!("Needed for '{lhs} {} {rhs}'", self.display_name()))?;
 
+        // This could be broken into multiple functions, and I was going to, but
+        // really, I think that compared to this it would *degrade* readability. 
+        // Having them like this makes it really easy to get the full picture and 
+        // reduces boilerplate, and as is, it's really easy to find the specific 
+        // type-operator pair.
         match (lhs, rhs) {
             (Rational(lhs), Rational(rhs)) => {
                 let result = match self {
@@ -129,7 +134,6 @@ impl BinaryOperator {
                     Subtract => rug::Rational::from(lhs - rhs),
                     Multiply => rug::Rational::from(lhs * rhs),
                     Divide => rug::Rational::from(lhs / rhs),
-                    Remainder => rug::Rational::from(lhs / rhs),
                     Power => return rational_pow(lhs, &rhs, precision_bits),
 
                     LessThan => return Ok(Boolean(lhs < rhs)),
@@ -219,6 +223,7 @@ impl BinaryOperator {
         }
     }
 
+    #[cfg_attr(coverage, no_coverage)]
     pub fn display_name(self) -> &'static str {
         use BinaryOperator::*;
         match self {
@@ -270,5 +275,74 @@ impl UnaryOperator {
             (Not, Boolean(x)) => Ok(Boolean(!x)),
             (Not, other) => bail!("`!` is not defined for {}", other.type_name()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{util::testing::{approx_eq, float, complex, rational, bool}, PRECISION};
+
+    use super::{UnaryOperator, BinaryOperator};
+
+    #[test]
+    fn test_unary_operators_work() {
+        assert!(approx_eq(UnaryOperator::Negate.apply(float(1.0)).unwrap(), float(-1.0), 0.0));
+        assert!(approx_eq(UnaryOperator::Negate.apply(rational(1,1)).unwrap(), rational(-1,1), 0.0));
+        assert!(approx_eq(UnaryOperator::Negate.apply(complex(1.0, 1.0)).unwrap(), complex(-1.0, -1.0), 0.0));
+        assert!(approx_eq(UnaryOperator::Not.apply(bool(true)).unwrap(), bool(false), 0.0));
+
+        // Probably totally meaningless
+        assert!(UnaryOperator::Negate.apply(bool(false)).is_err());
+        assert!(UnaryOperator::Not.apply(float(1.0)).is_err());
+        assert!(UnaryOperator::Not.apply(rational(1,1)).is_err());
+        assert!(UnaryOperator::Not.apply(complex(1.0, 1.0)).is_err());
+    }
+
+    #[test]
+    fn test_boolean_operators() {
+        let inputs = [
+            (("&", 1, 0), 0),   (("xor", 1, 0), 1),   (("||", 1, 0), 1),
+            (("&", 0, 1), 0),   (("xor", 0, 1), 1),   (("||", 0, 1), 1),
+            (("&", 1, 1), 1),   (("xor", 1, 1), 0),   (("||", 1, 1), 1),
+            (("&", 0, 0), 0),   (("xor", 0, 0), 0),   (("||", 0, 0), 0),
+
+            (("|", 1, 0), 1),   (("&&", 1, 0), 0),
+            (("|", 0, 1), 1),   (("&&", 0, 1), 0),
+            (("|", 1, 1), 1),   (("&&", 1, 1), 1),
+            (("|", 0, 0), 0),   (("&&", 0, 0), 0),
+        ];
+
+        for ((operator_name, input_a, input_b), desired_result) in inputs {
+            let operator = BinaryOperator::from_chars(operator_name.as_bytes()).unwrap().0;
+            let result = operator.apply(bool(input_a != 0), bool(input_b != 0), 0).unwrap();
+            assert_eq!(result, bool(desired_result != 0));
+        }
+    }
+
+    #[test]
+    fn test_basic_rational_operations() {
+        let inputs = [
+            (("+", 3, 4),  7.0),    (("|", 13, 9), 13.0),
+            (("-", 3, 4), -1.0),    (("&", 13, 9), 9.0),
+            (("*", 3, 4), 12.0),    (("xor", 13, 9), 4.0),
+            (("/", 3, 4), 0.75),    (("<<", 13, 1), 26.0),
+            (("^", 3, 4), 81.0),    ((">>", 13, 1), 6.0),
+        ];
+
+        for ((operator_name, input_a, input_b), desired_result) in inputs {
+            let operator = BinaryOperator::from_chars(operator_name.as_bytes()).unwrap().0;
+            let result = operator.apply(rational(input_a, 1), rational(input_b, 1), 0).unwrap();
+            assert!(approx_eq(result, float(desired_result), 0.000001));
+        }
+    }
+    
+    // ... and here I gave up on the rest, because these have been notoriously hand-tested over and over,
+    // and these aren't revealing anything new.
+
+    #[test]
+    fn test_division_by_zero_is_prevented() {
+        assert!(BinaryOperator::Divide.apply(float(1.0), rational(0, 1), PRECISION).is_err());
+        assert!(BinaryOperator::Divide.apply(float(1.0), float(0.0), PRECISION).is_err());
+        assert!(BinaryOperator::Divide.apply(float(1.0), complex(0.0, 0.0), PRECISION).is_err());
     }
 }

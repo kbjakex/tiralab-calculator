@@ -6,7 +6,7 @@ use bevy_utils::HashMap;
 use crate::{
     builtins::{self, BuiltinFnPtr},
     operators::{BinaryOperator, UnaryOperator},
-    parser::{self, parse_error, ParseResult},
+    infix_to_postfix::{self, parse_error, ParseResult},
 };
 
 pub struct CalculatorState {
@@ -83,8 +83,9 @@ impl Value {
 
     pub fn type_name(&self) -> &'static str {
         match self {
-            // To not confuse end users with information that is unlikely
-            // to be useful, display both rationals and decimals as "real number"
+            // To not confuse end users with information that is more likely
+            // to be confusing than useful, display both rationals and decimals 
+            // as "real number"
             Value::Decimal(_) => "real number",
             Value::Rational(_) => "real number",
             Value::Complex(_) => "complex",
@@ -132,14 +133,14 @@ impl Function {
         parameter_names: &[&str],
         state: &CalculatorState,
     ) -> ParseResult<Self> {
-        let tokens = parser::infix_to_postfix(expression)?;
+        let tokens = infix_to_postfix::infix_to_postfix(expression)?;
         Self::from_name_and_tokens(name, name_span, &tokens, parameter_names, state)
     }
 
     pub fn from_name_and_tokens(
         name: Box<str>,
         name_span: Range<usize>,
-        tokens: &[parser::Token],
+        tokens: &[infix_to_postfix::Token],
         parameter_names: &[&str],
         state: &CalculatorState,
     ) -> ParseResult<Self> {
@@ -154,8 +155,8 @@ impl Function {
         let mut output_format = OutputFmt::Base10;
         for token in tokens {
             match &token.kind {
-                parser::TokenKind::Number(value) => resolved.push(Token::Constant(value.clone())),
-                &parser::TokenKind::Variable { name } => {
+                infix_to_postfix::TokenKind::Number(value) => resolved.push(Token::Constant(value.clone())),
+                &infix_to_postfix::TokenKind::Variable { name } => {
                     if let Some(index) = parameter_names
                         .iter()
                         .position(|param_name| *param_name == name)
@@ -168,7 +169,7 @@ impl Function {
                         parse_error!(token.span.clone(), "Unknown variable '{name}'");
                     }
                 }
-                &parser::TokenKind::Function {
+                &infix_to_postfix::TokenKind::Function {
                     name: called_fn_name,
                     parameter_count,
                 } => {
@@ -205,10 +206,10 @@ impl Function {
                         parameter_count,
                     });
                 }
-                &parser::TokenKind::UnaryOperator(operator) => {
+                &infix_to_postfix::TokenKind::UnaryOperator(operator) => {
                     resolved.push(Token::UnaryOperator(operator));
                 }
-                &parser::TokenKind::BinaryOperator(operator) => {
+                &infix_to_postfix::TokenKind::BinaryOperator(operator) => {
                     resolved.push(Token::BinaryOperator(operator));
                 }
             };
@@ -292,7 +293,7 @@ impl Function {
 
 #[cfg(test)]
 mod tests {
-    use crate::{state::Variable, DEFAULT_PRECISION};
+    use crate::{state::Variable, PRECISION, util::testing::rational};
 
     use super::{CalculatorState, Function, Value};
 
@@ -304,57 +305,27 @@ mod tests {
     ) -> Value {
         Function::from_name_and_expression("foo".into(), 0..0, expression, params, state)
             .unwrap()
-            .evaluate(state, param_values, DEFAULT_PRECISION)
+            .evaluate(state, param_values, PRECISION)
             .unwrap()
-    }
-
-    fn val(numerator: i32, denominator: u32) -> Value {
-        Value::rational(numerator, denominator)
     }
 
     #[test]
     fn test_simple_evaluates_correctly() {
         let state = CalculatorState::new_with_builtins();
-        assert_eq!(val(1, 6), eval(&state, "1.0 / 6.0", &[], &[]));
-        assert_eq!(val(5, 2), eval(&state, "(x + 3) / 2", &["x"], &[val(2, 1)]));
-        assert_eq!(
-            val(-1, 1),
-            eval(&state, "x - y", &["x", "y"], &[val(1, 1), val(2, 1)])
-        );
-        assert_eq!(
-            val(-3, 1),
-            eval(
-                &state,
-                "(x - y) / (x + y)",
-                &["x", "y"],
-                &[val(1, 1), val(-2, 1)]
-            )
-        );
+        assert_eq!(rational(1, 6), eval(&state, "1.0 / 6.0", &[], &[]));
+        assert_eq!(rational(5, 2), eval(&state, "(x + 3) / 2", &["x"], &[rational(2, 1)]));
+        assert_eq!(rational(-1, 1), eval(&state, "x - y", &["x", "y"], &[rational(1, 1), rational(2, 1)]));
+        assert_eq!(rational(-3, 1), eval(&state,"(x - y) / (x + y)",&["x", "y"], &[rational(1, 1), rational(-2, 1)]));
     }
 
     #[test]
     fn test_variable_references_work() {
         let mut state = CalculatorState::new_with_builtins();
-        state.variables.insert(
-            "mypi".into(),
-            Variable {
-                value: val(31415926, 10000000),
-                builtin: false,
-            },
-        );
-        state.variables.insert(
-            "foo".into(),
-            Variable {
-                value: val(-100, 1),
-                builtin: false,
-            },
-        );
+        state.variables.insert("mypi".into(), Variable { value: rational(31415926, 10000000), builtin: false });
+        state.variables.insert("foo".into(), Variable { value: rational(-100, 1), builtin: false });
 
-        assert_eq!(
-            val(-31415926, 1000000000),
-            eval(&state, "mypi / foo", &[], &[])
-        );
-        assert_eq!(val(0, 1), eval(&state, "foo + x", &["x"], &[val(100, 1)]));
+        assert_eq!(rational(-31415926, 1000000000), eval(&state, "mypi / foo", &[], &[]));
+        assert_eq!(rational(0, 1), eval(&state, "foo + x", &["x"], &[rational(100, 1)]));
     }
 
     #[test]
@@ -378,16 +349,8 @@ mod tests {
         .unwrap();
         state.functions.insert("f".into(), test_fn);
 
-        assert_eq!(val(3 * 5, 7), eval(&state, "f(3, 5, 7)", &[], &[]));
-        assert_eq!(
-            val(3 * 5, 7),
-            eval(
-                &state,
-                "f(x, y, z)",
-                &["x", "y", "z"],
-                &[val(3, 1), val(5, 1), val(7, 1)]
-            )
-        );
+        assert_eq!(rational(3 * 5, 7), eval(&state, "f(3, 5, 7)", &[], &[]));
+        assert_eq!(rational(3 * 5, 7),eval(&state,"f(x, y, z)",&["x", "y", "z"], &[rational(3, 1), rational(5, 1), rational(7, 1)]));
     }
 
     #[test]
@@ -414,19 +377,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(test_fn.evaluate(&state, &[], DEFAULT_PRECISION).is_err());
-        assert!(test_fn
-            .evaluate(&state, &[val(1, 1)], DEFAULT_PRECISION)
-            .is_err());
-        assert!(test_fn
-            .evaluate(&state, &[val(1, 1), val(2, 1)], DEFAULT_PRECISION)
-            .is_err());
-        assert!(test_fn
-            .evaluate(
-                &state,
-                &[val(1, 1), val(2, 1), val(3, 1)],
-                DEFAULT_PRECISION
-            )
-            .is_ok());
+        assert!(test_fn.evaluate(&state, &[], PRECISION).is_err());
+        assert!(test_fn.evaluate(&state, &[rational(1, 1)], PRECISION).is_err());
+        assert!(test_fn.evaluate(&state, &[rational(1, 1), rational(2, 1)], PRECISION).is_err());
+        assert!(test_fn.evaluate(&state, &[rational(1, 1), rational(2, 1), rational(3, 1)], PRECISION).is_ok());
     }
 }
