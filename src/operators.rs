@@ -223,7 +223,7 @@ impl BinaryOperator {
         }
     }
 
-    #[cfg_attr(coverage, no_coverage)]
+    #[cfg_attr(coverage_nightly, no_coverage)]
     pub fn display_name(self) -> &'static str {
         use BinaryOperator::*;
         match self {

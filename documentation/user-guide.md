@@ -1,6 +1,6 @@
 ## User guide
 
-I'll try to have a release ready for the next peer review, but otherwise, here are the steps to run the program.
+The prebuilt releases for Windows & Linux can be found [here](https://github.com/kbjakex/tiralab-calculator/releases). Alternatively, here are the steps to build & run the program yourself:
 
 1. Install the Rust language if not already installed. Installation instructions can be found from the [official website](https://www.rust-lang.org/learn/get-started).
 (Should be a very painless process!)
@@ -20,7 +20,7 @@ Then (once that has finished compiling), within the project directory, run `carg
 prompt you to install the tools it requires to run - type `yes`.
 
 To generate a HTML report, which lets you visually see which lines have been tested (probably an easy way to find flaws in my testing!...),
-type `cargo llvm-cov --html --ignore-filename-regex tui`. It'll show where the HTML was generated, but generally, it'll be under `<project>/target/llvm-cov/`.
+type `cargo +nightly llvm-cov --html --ignore-filename-regex tui`. It'll show where the HTML was generated, but generally, it'll be under `<project>/target/llvm-cov/`. Note: `+nightly` is _required_ because `no_coverage` is not in stable yet.
 
 
 ### Calculator usage

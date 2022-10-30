@@ -42,7 +42,7 @@ pub fn subslice_range(full: &str, part: &str) -> Range<usize> {
 /// Converts a Value to a user-friendly string format, ready to be displayed to the user.
 /// If compact mode is used, only single-line outputs (no newlines) will be returned,
 /// meaning some information will be lost (cut off).
-#[cfg_attr(coverage, no_coverage)]
+#[cfg_attr(coverage_nightly, no_coverage)]
 pub fn stringify_output(value: Value, format: OutputFmt, compact: bool) -> anyhow::Result<String> {
     let (radix, prefix, unit) = match format {
         OutputFmt::Base10 => (10, "", "digits"),
@@ -84,7 +84,7 @@ pub fn stringify_output(value: Value, format: OutputFmt, compact: bool) -> anyho
     Ok(result)
 }
 
-#[cfg_attr(coverage, no_coverage)]
+#[cfg_attr(coverage_nightly, no_coverage)]
 fn stringify_complex(value: rug::Complex, digits: usize, radix: i32, prefix: &str) -> anyhow::Result<String> {
     use std::fmt::Write;
     let mut result = String::new();
@@ -104,7 +104,7 @@ fn stringify_complex(value: rug::Complex, digits: usize, radix: i32, prefix: &st
     Ok(result)
 }
 
-#[cfg_attr(coverage, no_coverage)]
+#[cfg_attr(coverage_nightly, no_coverage)]
 fn stringify_rational(value: rug::Rational, digits: usize, radix: i32, prefix: &str, compact: bool) -> anyhow::Result<String> {
     use std::fmt::Write;
     
@@ -141,7 +141,7 @@ fn stringify_rational(value: rug::Rational, digits: usize, radix: i32, prefix: &
 /// Converts a decimal value into a user-friendly string representation.
 /// The default formatting implemented for rug types can be very rough,
 /// preferring no leading zeros but adding numerous trailing zeros.
-#[cfg_attr(coverage, no_coverage)]
+#[cfg_attr(coverage_nightly, no_coverage)]
 pub fn float_to_string(float: &rug::Float, digits: usize, radix: i32) -> String {
     // 1. Because floats are inherently lossy and cannot represent all values exactly,
     // sometimes values are printed wrong; for example 5.2 as 5.199999999999... .
@@ -346,7 +346,7 @@ pub mod testing {
         Value::Boolean(value)
     }
 
-    #[cfg_attr(coverage, no_coverage)]
+    #[cfg_attr(coverage_nightly, no_coverage)]
     pub fn approx_eq(value: Value, target: Value, epsilon: f64) -> bool {
         let (value, target) = promote_to_common_type(&value, &target, PRECISION).unwrap();
 

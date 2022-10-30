@@ -1,8 +1,8 @@
 #![warn(clippy::all)]
-#![cfg_attr(coverage_nightly, feature(no_coverage))]
+#![cfg_attr(coverage_nightly_nightly, feature(no_coverage))]
 
 // For the reader:
-// All functions marked with `#[cfg_attr(coverage, no_coverage)]` are excluded from
+// All functions marked with `#[cfg_attr(coverage_nightly, no_coverage)]` are excluded from
 // code coverage, as they are either not meaningful to test (such as implementation of the Display trait)
 // or they are user interface code.
 
@@ -31,7 +31,7 @@ use crate::{infix_to_postfix::parse_error, state::Function, util::subslice_range
 /// The precision used for decimal (approximate) calculations, in bits.
 pub const PRECISION: u32 = 256;
 
-#[cfg_attr(coverage, no_coverage)]
+#[cfg_attr(coverage_nightly, no_coverage)]
 fn main() {
     // The state has to be wrapped in a Rc-RefCell, because the TUI controller needs to have
     // mutable access to it as well, and Rust can't tell at compile-time that it is indeed safe
@@ -141,12 +141,13 @@ fn process_variable_or_function(
     Ok(())
 }
 
+/// Parses & executes the task of declaring variables. Expected to be called from `process_input`.
 fn process_variable(
     variable_name: &str,
-    rest: &str,
-    full: &str,
+    rest: &str, // Everything that comes after the `=`
+    full: &str, // Full original input
     state: &mut CalculatorState,
-    dry_run: bool,
+    dry_run: bool, // If true, calculator state will stay unmodified.
 ) -> ParseResult<()> {
     if rest.is_empty() {
         let span = subslice_range(full, rest);
@@ -185,13 +186,14 @@ fn process_variable(
     Ok(())
 }
 
+/// Parses & executes the task of declaring functions. Expected to be called from `process_input`.
 fn process_function(
     function_name: &str,
     tokens: TokenIterator<'_>,
-    rest: &str,
-    full: &str,
+    rest: &str, // Everything that comes after the `=`
+    full: &str, // Full original input
     state: &mut CalculatorState,
-    dry_run: bool,
+    dry_run: bool, // If true, calculator state will stay unmodified.
 ) -> ParseResult<()> {
     if rest.is_empty() {
         let span = subslice_range(full, rest);
@@ -261,13 +263,7 @@ fn parse_function_parameters(mut tokens: TokenIterator<'_>) -> ParseResult<Vec<&
         }
     }
 
-    if matches!(
-        prev_token,
-        Some(ParserToken {
-            kind: ParserTokenKind::Delimiter,
-            ..
-        })
-    ) {
+    if matches!(prev_token, Some(ParserToken { kind: ParserTokenKind::Delimiter, .. }) ) {
         parse_error!(prev_token.unwrap().span, "Last parameter name is empty");
     }
 
@@ -292,7 +288,6 @@ fn eval_postfix(tokens: &mut [Token], state: &CalculatorState) -> ParseResult<(V
     // Re-use evaluation implemented for functions
     let function = Function::from_name_and_tokens("".into(), 0..0, tokens, &[], state)?;
     match function.evaluate(state, &[], PRECISION) {
-        // TODO: don't hard-code precision
         Ok(val) => Ok((val, function.output_format)),
         Err(e) => parse_error!(0..0, "{e}"),
     }

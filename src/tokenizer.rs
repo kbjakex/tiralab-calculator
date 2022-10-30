@@ -36,14 +36,14 @@ pub enum ParserTokenKind<'a> {
 }
 
 impl std::fmt::Display for ParserToken<'_> {
-    #[cfg_attr(coverage, no_coverage)]
+    #[cfg_attr(coverage_nightly, no_coverage)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.kind.fmt(f)
     }
 }
 
 impl std::fmt::Display for ParserTokenKind<'_> {
-    #[cfg_attr(coverage, no_coverage)]
+    #[cfg_attr(coverage_nightly, no_coverage)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
             ParserTokenKind::Number(ref x) => write!(f, "{x}"),

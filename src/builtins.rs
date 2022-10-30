@@ -18,7 +18,7 @@ pub type BuiltinFnPtr = fn(&[Value], u32) -> anyhow::Result<Value>;
 /// The parameter count will be usize::MAX if it takes a variable number of
 /// parameters.
 #[rustfmt::skip]
-#[cfg_attr(coverage, no_coverage)]
+#[cfg_attr(coverage_nightly, no_coverage)]
 pub fn resolve_builtin_fn_call(name: &str) -> Option<(BuiltinFnPtr, usize)> {
     let (fn_ptr, param_count) = match name {
         "sqrt"  => (sqrt as BuiltinFnPtr, 1),
