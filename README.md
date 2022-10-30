@@ -2,6 +2,8 @@
 # tiralab-calculator
 A scientific calculator University project
 
+**Note**: Code coverage might be outdated at the moment. I had not realized it has been failing to build. See [here](https://github.com/kbjakex/tiralab-calculator/blob/main/documentation/user-guide.md) for how to generate an up-to-date report yourself.
+
 <img src="https://raw.githubusercontent.com/kbjakex/tiralab-calculator/main/documentation/images/front_page_img.png" width="550">
 
 ### Documentation
