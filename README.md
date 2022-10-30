@@ -2,7 +2,7 @@
 # tiralab-calculator
 A scientific calculator University project
 
-<img src="https://raw.githubusercontent.com/kbjakex/tiralab-calculator/main/documentation/images/calculator.png" width="550">
+<img src="https://raw.githubusercontent.com/kbjakex/tiralab-calculator/main/documentation/images/front_page_img.png" width="550">
 
 ### Documentation
 
